@@ -1,0 +1,46 @@
+---
+description: Enforce documentation, design explanation, and pros/cons analysis before any implementation
+alwaysApply: true
+---
+
+# Document and Explain Before Implementing
+
+Before writing or modifying any implementation code, you MUST:
+
+## 1. Document the design
+
+- Explain **what** you are about to build and **why** (link to the relevant requirement in `docs/REQUIREMENTS.md`).
+- Describe the approach at a level the developer (a Java/Spring Boot developer learning TypeScript) can follow.
+
+## 2. Present alternatives with pros and cons
+
+When there is more than one reasonable approach (library choice, data model, API shape, UI pattern), present a short comparison:
+
+```
+### Option A: <name>
+- Pros: ...
+- Cons: ...
+
+### Option B: <name>
+- Pros: ...
+- Cons: ...
+
+### Recommendation: <which and why>
+```
+
+Do NOT skip this step even if one option seems obvious — state why it is obvious.
+
+## 3. Get confirmation before writing code
+
+After presenting the design and trade-offs, wait for explicit approval before proceeding with implementation. If working autonomously (e.g. in an agent loop), record the decision and rationale in a code comment or doc before writing the code.
+
+## 4. Add inline documentation
+
+- Every module, service, and non-trivial function must have a doc comment explaining its purpose.
+- Complex logic must include comments explaining **why**, not just **what**.
+- API endpoints must document request/response shape, status codes, and error cases.
+
+## 5. Keep docs in sync
+
+- When implementation changes a design decision, update `docs/ARCHITECTURE.md` or `docs/STRATEGY.md` accordingly.
+- Never let code drift from the docs silently.
