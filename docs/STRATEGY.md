@@ -1,6 +1,6 @@
 # Quote Management System – Strategy
 
-**Version:** 4.0  
+**Version:** 4.1  
 **Last Updated:** April 2026  
 **Related docs:** [REQUIREMENTS.md](REQUIREMENTS.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md) | [PRODUCT-PLAN.md](PRODUCT-PLAN.md)
 
@@ -169,7 +169,7 @@ Native `<select>` dropdown chosen over combobox (extra dependency) or modal (hea
 
 | Change | Files |
 |--------|-------|
-| TenantSettings model + migration (including `secondaryColor`, `fontColor`, `backgroundColor`, `logoUrl`, `logoSize`, `showCompanyName`) | `prisma/schema.prisma`, `prisma/migrations/` |
+| TenantSettings model + migrations (including `secondaryColor`, `fontColor`, `navbarColor`, `backgroundColor`, `logoUrl`, `logoSize`, `showCompanyName`) | `prisma/schema.prisma`, `prisma/migrations/` |
 | Async tenant config (DB → env fallback) | `config/tenant.ts` (`loadTenantConfig()` added) |
 | All server components updated to use `loadTenantConfig()` | `app/page.tsx`, `app/login/page.tsx`, `app/(portal)/layout.tsx`, `app/q/[token]/page.tsx`, `app/q/[token]/not-found.tsx`, `app/(portal)/quotes/[id]/page.tsx`, `app/api/quotes/[id]/finalise/route.ts`, `lib/email.ts` |
 | Settings API (read/update) | `app/api/settings/route.ts` (new) |
@@ -194,6 +194,7 @@ Native `<select>` dropdown chosen over combobox (extra dependency) or modal (hea
 | Color extraction | `color-thief-browser` (canvas-based, client-only) | Server-side extraction (no canvas), sharp (Node-only) |
 | Email notifications tier | All tiers — separate card, never gated | Premium-only (blocks basic users from configuring their notification inbox) |
 | Premium Branding card | Merged theme colors + company info into one gated card | Separate cards with separate toggles (confusing, two toggles for one plan gate) |
+| Navbar vs body background | Two separate fields (`navbarColor`, `backgroundColor`) — navbar falls back to `primaryColor` | Single `backgroundColor` for everything (can't independently brand header and page body) |
 
 #### Phase G2 test plan
 
@@ -287,6 +288,66 @@ Native `<select>` dropdown chosen over combobox (extra dependency) or modal (hea
 | G4.8 | Items are editable after load | Load template → modify a line item → Save quote | Modified items saved correctly |
 | G4.9 | Save as template | Open any quote → "Save as Template" → name it | Template created with quote's line items |
 | G4.10 | No templates = no picker | Delete all templates → open draft quote → "Load template" button hidden |
+
+---
+
+### Phase G5 – Quote Enhancements — Done
+
+**Scope:**
+- Rich-text sections on quotes (heading + Tiptap body; rendered on public quote page).
+- Lead source field on quotes (mirrored from request, editable in any status).
+- Project address and expected completion date on quotes (shown on public quote page).
+- Separate navbar background and body background color controls in premium branding.
+- Background color fix: navbar header and body background now independently controllable via `navbarColor` and `backgroundColor`.
+- Tiptap bullet/list rendering: `@tailwindcss/typography` installed; `prose` class activates on both public quote page and in the section editor via `.ProseMirror` CSS.
+
+**Depends on:** Phases G0–G4.
+
+**What was built:**
+
+| Change | Files |
+|--------|-------|
+| `QuoteSection` model + `leadSource`, `projectAddress`, `expectedCompletionDate` fields + migration | `prisma/schema.prisma`, `prisma/migrations/20260405184414_add_quote_enhancements/` |
+| `navbarColor` field + migration | `prisma/schema.prisma`, `prisma/migrations/20260405190143_add_navbar_color/` |
+| Quote API: sections (delete+recreate in PUT), new fields, leadSource fast path | `app/api/quotes/[id]/route.ts` |
+| Quote creation: mirror `leadSource` from request | `app/api/quotes/route.ts` |
+| Quote detail page: sections include + serialization | `app/(portal)/quotes/[id]/page.tsx` |
+| Quote builder: Tiptap `SectionEditor`, lead source select, project address + completion date inputs | `app/(portal)/quotes/[id]/quote-detail.tsx` |
+| Public quote page: render sections, project address, completion date; `navbarColor` header | `app/q/[token]/public-quote.tsx`, `app/q/[token]/page.tsx` |
+| Settings form: `navbarColor` field, separate swatch targets for navbar vs body | `app/(portal)/settings/settings-form.tsx`, `settings/page.tsx` |
+| Settings preview: `navbarColor` in preview header | `app/(portal)/settings/quote-preview.tsx` |
+| Tenant config: `navbarColor` in interface + loaders | `config/tenant.ts` |
+| Settings API: `navbarColor` in schema and upsert | `app/api/settings/route.ts` |
+| Typography plugin + Tiptap editor CSS | `app/globals.css` |
+| Dependencies | `@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, `@tailwindcss/typography` |
+
+**Design decisions:**
+
+| Decision | Chosen | Alternatives considered |
+|----------|--------|------------------------|
+| Rich-text editor | Tiptap + StarterKit | `react-quill` (no SSR support), plain `<textarea>` (no formatting), `contenteditable` div (complex) |
+| SSR hydration | `immediatelyRender: false` in `useEditor()` | Dynamic import with `ssr: false` (heavier, delays editor mount) |
+| Section storage | Delete all + recreate on each PUT | Granular create/update/delete per section (more complex, same network cost) |
+| List rendering | `@tailwindcss/typography` + `.ProseMirror` CSS | Manual list-style reset in globals.css (fragile, must replicate all prose rules) |
+| `navbarColor` fallback | Falls back to `primaryColor` when absent | Always require a distinct navbar color (breaks existing setups on upgrade) |
+| `leadSource` editability | Any status (it is metadata, not quote content) | Draft-only (unnecessarily restrictive for a classification field) |
+
+#### Phase G5 test plan
+
+| # | Test | Pass criteria |
+|---|------|---------------|
+| G5.1 | Build passes | `npx next build` succeeds with no TypeScript errors |
+| G5.2 | Add section in quote builder | Open draft quote → "Sections" card → "Add Section" → enter heading + formatted body → Save | Section persists |
+| G5.3 | Bullets in editor | In section editor → add bullet list | Bullet markers visible in editor while typing |
+| G5.4 | Sections on public quote | Finalise quote with a section → open public link | Section heading + formatted body (bullets, bold) rendered below notes |
+| G5.5 | Remove section | Open draft → remove a section → Save | Section gone from public quote page |
+| G5.6 | Lead source dropdown | Open any quote (any status) → change lead source → Save | New lead source persisted |
+| G5.7 | Project address | Open draft → enter project address → Save → open public quote | Address appears in "Prepared for" block |
+| G5.8 | Expected completion date | Enter date → Save → open public quote | "Expected completion: May 30, 2026" appears in header |
+| G5.9 | Navbar color | Enable premium → set `navbarColor` → Save → open public quote | Header uses `navbarColor`, not `primaryColor` |
+| G5.10 | Navbar fallback | Set `navbarColor` to blank → Save → open public quote | Header falls back to `primaryColor` |
+| G5.11 | Body background independent | Set `backgroundColor` to a light color, `navbarColor` to a dark color → public quote | Distinct header and body colors render correctly |
+| G5.12 | Preview reflects navbar color | Settings page → change `navbarColor` → click Preview | Modal header uses `navbarColor` |
 
 ---
 

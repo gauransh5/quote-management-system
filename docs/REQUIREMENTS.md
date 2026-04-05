@@ -1,6 +1,6 @@
 # Quote Management System – Requirements
 
-**Version:** 2.0  
+**Version:** 2.1  
 **Last Updated:** April 2026  
 **Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md) | [PRODUCT-PLAN.md](PRODUCT-PLAN.md)
 
@@ -55,12 +55,19 @@ Prioritised list. Each item should be traceable to the [Business Workflow](#busi
 - Tax labels are configurable (e.g. GST/PST, HST, VAT, Sales Tax).
 - Branding supports two tiers:
   - **Basic (all tiers):** company name, logo URL, logo size, option to show company name alongside logo, primary color, tax labels, locale, currency.
-  - **Premium:** full theme palette — secondary/accent color, font color, background color; plus tagline, phone, website, footer text.
+  - **Premium:** full theme palette — secondary/accent color, font color, **navbar/header background color** (independent from body background), **body background color**; plus tagline, phone, website, footer text. Navbar and body background are separate controls; navbar falls back to primary color when not set.
 - Email notifications are configurable for **all tiers**: admin notification address, sender name, sender address.
 - Admins can configure all tenant settings via a self-service Settings page in the portal.
 - Settings are stored in the database (TenantSettings table) with env var fallback for initial deployment.
 - Locale options use `Intl.getCanonicalLocales()` with `Intl.DisplayNames` labels. Currency options are populated from `Intl.supportedValuesOf('currency')` — no hardcoded lists.
 - All monetary values on the public quote page and in emails are formatted using `Intl.NumberFormat` with the configured locale and currency — no hardcoded currency symbols.
+
+### Quote fields
+
+- Quotes have optional **project address** and **expected completion date** fields. Both are shown on the public quote page (address in "Prepared for" block, completion date in the header).
+- Quotes have a **lead source** field (values: `website`, `social_media`, `referral`, `phone`, `other`), mirrored from the originating quote request on creation. Editable by sales in all quote statuses (it is metadata, not quote content).
+- Quotes support **rich-text sections**: named sections with a heading and a rich-text body (Tiptap HTML). Admins and sales can add any number of sections (e.g. "Inclusions", "Terms & Conditions") to a draft quote. Sections are rendered on the public quote page below the notes block using `prose` typography styles.
+- Section bodies support bold, italic, bullet lists, and ordered lists via the Tiptap StarterKit.
 
 ### Quote templates
 
@@ -108,7 +115,7 @@ Prioritised list. Each item should be traceable to the [Business Workflow](#busi
 ### Public quote page (by link)
 
 - Customer opens unique link (no login).
-- Page is a **branded, styled HTML page** showing: company branding from tenant config (name/logo, colors; tagline/phone/website if premium), full quote details (including line-item schedule breakdown and taxes), and the **name, title, and profile photo** of the sales team member.
+- Page is a **branded, styled HTML page** showing: company branding from tenant config (name/logo, colors; tagline/phone/website if premium), full quote details (including line-item schedule breakdown and taxes), and the **name, title, and profile photo** of the sales team member. Also shows project address, expected completion date, and rich-text sections when present.
 - **Download/Print:** Browser print-to-PDF (`@media print` CSS).
 - **Accept flow:** Customer types **name** and **title**, checks "I accept", clicks **"Accept Quote"**. Typed name is the electronic signature.
 - On accept: set status to accepted; store signature data; send email to admin and to the sales team member (using configured email addresses); update dashboard status.

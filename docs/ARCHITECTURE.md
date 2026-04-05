@@ -1,6 +1,6 @@
 # Quote Management System – Architecture
 
-**Version:** 3.0  
+**Version:** 3.1  
 **Last Updated:** April 2026  
 **Related docs:** [REQUIREMENTS.md](REQUIREMENTS.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md) | [PRODUCT-PLAN.md](PRODUCT-PLAN.md)
 
@@ -79,10 +79,11 @@ All customer-specific values are centralised in `config/tenant.ts`. No hardcoded
 | Phone | `COMPANY_PHONE` | — | Public quote, print footer (premium only) |
 | Website | `COMPANY_WEBSITE` | — | Public quote, print footer (premium only) |
 | Logo URL | `COMPANY_LOGO_URL` | — | Public quote header |
-| Primary color | `PRIMARY_COLOR` | "#000000" | Portal sidebar bg, public quote header bg |
+| Primary color | `PRIMARY_COLOR` | "#000000" | Portal sidebar bg, fallback header bg, action buttons |
 | Secondary color | `SECONDARY_COLOR` | — | Buttons (Accept, Save), active nav — premium only |
 | Font color | `FONT_COLOR` | Auto-computed | Text on primary-colored surfaces — premium only |
-| Background color | `BACKGROUND_COLOR` | — | Portal content area + public quote page bg — premium only |
+| Navbar color | `NAVBAR_COLOR` | — | Public quote header background; falls back to `primaryColor` — premium only |
+| Background color | `BACKGROUND_COLOR` | — | Page body background behind quote content — premium only |
 | Email from name | `EMAIL_FROM_NAME` | Company name | Email sender display name |
 | Email from address | `EMAIL_FROM_ADDRESS` | "noreply@example.com" | Email sender address |
 | Email admin address | `EMAIL_ADMIN_ADDRESS` | "admin@example.com" | Notification recipient |
@@ -121,16 +122,17 @@ Admins edit settings via the Settings page (`/settings`). Changes take effect im
 
 ### Theme colors (premium)
 
-Four colors drive the full visual theme (all premium-gated):
+Five colors drive the full visual theme. `primaryColor` is available to all tiers; the rest are premium-gated:
 
-| Color | Field | Applied to |
-|-------|-------|-----------|
-| Primary | `primaryColor` | Portal sidebar background, public quote header background |
-| Secondary / Accent | `secondaryColor` | Portal active nav highlight, action buttons (Accept, Save) |
-| Font on brand | `fontColor` | Text inside sidebar and quote header; auto-computed (WCAG contrast) if not set |
-| Background | `backgroundColor` | Portal content area background, public quote page background |
+| Color | Field | Tier | Applied to |
+|-------|-------|------|-----------|
+| Primary | `primaryColor` | All | Portal sidebar background, action buttons, fallback for navbar |
+| Secondary / Accent | `secondaryColor` | Premium | Portal active nav highlight, action buttons (Accept, Save) |
+| Font on brand | `fontColor` | Premium | Text inside sidebar and quote header; auto-computed (WCAG contrast) if not set |
+| Navbar / Header | `navbarColor` | Premium | Header bar background on the public quote page; falls back to `primaryColor` when absent |
+| Body Background | `backgroundColor` | Premium | Page body background behind the quote content (portal + public quote) |
 
-**Color extraction:** When a logo URL is set, admins can click "Extract Palette from Logo" in the Settings page (premium section). The browser loads the image into a canvas and uses `color-thief-browser` to extract a 6-color palette. The dominant color is auto-assigned to `primaryColor`, the second to `secondaryColor`, and `fontColor` is auto-computed for WCAG readability. The admin can then fine-tune all four colors with individual pickers and a "Reset to defaults" option. Palette extraction requires the image server to support CORS; failures are surfaced with a user-friendly message.
+**Color extraction:** When a logo URL is set, admins can click "Extract Palette from Logo" in the Settings page (premium section). The browser loads the image into a canvas and uses `color-thief-browser` to extract a 6-color palette. The dominant color is auto-assigned to `primaryColor`, the second to `secondaryColor`, and `fontColor` is auto-computed for WCAG readability. The admin can then fine-tune all five colors with individual pickers and a "Reset to defaults" option. The swatch target dropdown lets admins assign extracted colors to any field, including `navbarColor` and `backgroundColor` separately. Palette extraction requires the image server to support CORS; failures are surfaced with a user-friendly message.
 
 **`readableFontColor(bgHex)`** in `lib/utils.ts`: Uses the WCAG 2.1 relative luminance formula to determine whether white (`#ffffff`) or near-black (`#1a1a1a`) provides better contrast against a given background hex. Used everywhere auto-computed font colors are needed.
 
@@ -179,8 +181,9 @@ Four colors drive the full visual theme (all premium-gated):
 | `QuoteTemplate` | Admin-managed named set of line items. Can be loaded into a draft quote to pre-fill all items at once. |
 | `QuoteTemplateItem` | One line item within a `QuoteTemplate`. Mirrors `QuoteItem` structure (description, quantity, unitPrice, itemType) without schedule. |
 | `QuoteRequest` | Inbound lead from webhook or created manually. `leadSource`: `"website"`, `"phone"`, `"referral"`, etc. |
-| `Quote` | Built quote. One-to-one with `QuoteRequest`. Statuses: `REQUEST → DRAFT → FINALISED → CHANGES_REQUESTED → ACCEPTED / REJECTED / EXPIRED`. |
+| `Quote` | Built quote. One-to-one with `QuoteRequest`. Statuses: `REQUEST → DRAFT → FINALISED → CHANGES_REQUESTED → ACCEPTED / REJECTED / EXPIRED`. Additional fields: `leadSource` (mirrored from request, editable any status), `projectAddress`, `expectedCompletionDate`. |
 | `QuoteItem` | Line item. `itemType`: `"standard"` (qty × unitPrice) or `"hourly"` (schedule JSON → server computes total hours → quantity). |
+| `QuoteSection` | Rich-text section on a quote. Has `heading` (plain text) and `body` (Tiptap HTML). Ordered by `sortOrder`. Cascade-deleted with parent `Quote`. Rendered on the public quote page below the notes block. |
 | `Signature` | Typed e-signature on customer accept. Stores name, title, IP, timestamp. |
 | `AuditLog` | Immutable event trail. Actions defined in `lib/constants.ts → AUDIT_ACTION`. |
 
@@ -294,6 +297,8 @@ Admins manage a library of reusable line-item sets via the Templates page (`/tem
 | **Email** | **Resend** | "Quote accepted" and "changes requested" notifications only. Sender configured via tenant config. |
 | **Mobile** | React Native + Expo (future) | Calls the same API routes. |
 | **UI** | TailwindCSS v4 + shadcn/ui | Utility-first styling; accessible component primitives. |
+| **Typography** | `@tailwindcss/typography` | Registered via `@plugin` in `globals.css`. Enables `prose` class for rendering Tiptap HTML (bullets, ordered lists, headings) on public quote page and in the section editor. |
+| **Rich text** | Tiptap (`@tiptap/react`, `@tiptap/starter-kit`) | Rich-text editor for quote sections (heading + body). `immediatelyRender: false` required to avoid SSR hydration mismatch in Next.js. |
 | **Validation** | Zod | Request validation in API routes and forms. |
 | **Config** | `config/tenant.ts` | Centralised tenant config from env vars (DB-backed in future). |
 
