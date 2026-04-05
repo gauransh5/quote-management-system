@@ -59,6 +59,7 @@ export function DatePickerTime({
             {dateLabel}
           </Label>
           <Popover open={open} onOpenChange={setOpen}>
+            {/* @ts-expect-error shadcn/ui v4 PopoverTrigger asChild type mismatch */}
             <PopoverTrigger asChild>
               <Button
                 variant="outline"

@@ -3,13 +3,16 @@ import { Inter, Geist } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import AuthSessionProvider from "@/components/session-provider";
+import { getTenantConfig } from "@/config/tenant";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 const inter = Inter({ subsets: ["latin"] });
 
+const tenant = getTenantConfig();
+
 export const metadata: Metadata = {
-  title: "Boss Security — Quote Management",
-  description: "Internal quote management portal for Boss Security",
+  title: `${tenant.companyName} — Quote Management`,
+  description: `Internal quote management portal for ${tenant.companyName}`,
 };
 
 /**

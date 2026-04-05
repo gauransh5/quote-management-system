@@ -187,7 +187,7 @@ export default function UserManagement({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  placeholder="jane@bosssecurity.ca"
+                  placeholder="jane@company.com"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -326,7 +326,7 @@ export default function UserManagement({
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
                       required
-                      placeholder="jane@bosssecurity.ca"
+                      placeholder="jane@company.com"
                     />
                   </div>
                   <div className="space-y-2">

@@ -116,7 +116,7 @@ export default function QuoteRequestList({
       : tab === "leads"
         ? search
           ? "No leads match your search."
-          : "No new leads. They appear here from bosssecurity.ca or when created manually."
+          : "No new leads. They appear here from the webhook or when created manually."
         : search || statusFilter !== "All"
           ? "No quotes match your filters."
           : "No quotes created yet. Create one from the Leads tab.";

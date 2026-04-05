@@ -1,8 +1,8 @@
 # Quote Management System – Requirements
 
-**Version:** 1.0  
-**Last Updated:** March 2026  
-**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md)
+**Version:** 2.0  
+**Last Updated:** April 2026  
+**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md) | [PRODUCT-PLAN.md](PRODUCT-PLAN.md)
 
 This document is the single source of truth for **what** the system must do. AI agents should use it for scope and acceptance criteria before implementing any feature.
 
@@ -23,11 +23,11 @@ This document is the single source of truth for **what** the system must do. AI 
 
 End-to-end flow:
 
-1. **Customer submits form** on the existing WordPress website.
-2. **Quote request reaches the portal** (form POSTs to our webhook; system creates a quote request).
+1. **Customer submits form** on the company's website or external platform.
+2. **Quote request reaches the portal** (form POSTs to the webhook endpoint; system creates a quote request).
 3. **Portal shows the status of each quote** (request, draft, finalised, sent, viewed, accepted, rejected).
 4. **Once quote is finalised**, the system generates a **unique link** that redirects to the generated quote.
-5. **Customer** (via link): views quote, has option to **download** and **sign** the quote; quote is **accepted**.
+5. **Customer** (via link): views quote with company branding, has option to **download** and **sign** the quote; quote is **accepted**.
 6. **After acceptance:** system triggers email to **admin** and to the **sales team member**; status is updated on the dashboard.
 
 The dashboard shows, for the **current month**, an **Estimate Total** and an **Accepted Total** value of all quotes.
@@ -39,8 +39,8 @@ The dashboard shows, for the **current month**, an **Estimate Total** and an **A
 | Role | Capabilities |
 |------|--------------|
 | **Sales team** | Login; view/create/edit quotes; see own (or team) quotes; generate unique link and default message; copy link + message to clipboard; no user creation. |
-| **Admin** | Everything sales has; **create/delete/manage users** (e.g. new sales users); view aggregate data (e.g. monthly Estimate Total and Accepted Total). |
-| **Customer (end user)** | No login; access **only via unique link** — view quote, download PDF, sign, accept. |
+| **Admin** | Everything sales has; **create/delete/manage users** (e.g. new sales users); view aggregate data (e.g. monthly Estimate Total and Accepted Total); **configure tenant settings** (branding, email, tax labels — Phase G2). |
+| **Customer (end user)** | No login; access **only via unique link** — view branded quote, download PDF, sign, accept. |
 
 ---
 
@@ -48,61 +48,93 @@ The dashboard shows, for the **current month**, an **Estimate Total** and an **A
 
 Prioritised list. Each item should be traceable to the [Business Workflow](#business-workflow) and [User Roles](#user-roles-and-capabilities).
 
+### Tenant configuration
+
+- All customer-specific values (company name, branding, email addresses, tax labels, locale) are configurable via environment variables and (in future) a portal Settings page.
+- No hardcoded company names, email addresses, or service lists in source code.
+- Tax labels are configurable (e.g. GST/PST, HST, VAT, Sales Tax).
+- Branding supports two tiers:
+  - **Basic (all tiers):** company name, logo URL, logo size, option to show company name alongside logo, primary color, tax labels, locale, currency.
+  - **Premium:** full theme palette — secondary/accent color, font color, background color; plus tagline, phone, website, footer text.
+- Email notifications are configurable for **all tiers**: admin notification address, sender name, sender address.
+- Admins can configure all tenant settings via a self-service Settings page in the portal.
+- Settings are stored in the database (TenantSettings table) with env var fallback for initial deployment.
+- Locale options use `Intl.getCanonicalLocales()` with `Intl.DisplayNames` labels. Currency options are populated from `Intl.supportedValuesOf('currency')` — no hardcoded lists.
+- All monetary values on the public quote page and in emails are formatted using `Intl.NumberFormat` with the configured locale and currency — no hardcoded currency symbols.
+
+### Quote templates
+
+- Admins manage a library of named quote templates via the Templates page in the portal.
+- Each template has a name and a set of line items (description, quantity, unit price, item type).
+- Templates are available to all users via a "Load Template" dropdown in the draft quote builder.
+- Loading a template replaces all current line items in the quote (user is asked to confirm if items already exist).
+- All line item fields remain editable after loading a template.
+- Any quote (draft or finalised) has a "Save as Template" button that saves the current line items as a new template.
+- Template items do not include schedule data — the user adds schedule rows after loading a template for hourly items.
+- Admins can edit and delete templates from the Templates page.
+
+### Product catalog
+
+- Admins manage a product/service catalog via the Products page in the portal.
+- Each product has: name, optional SKU (unique), optional description, optional category, optional default price, and a unit of measure (unit, hour, month, day).
+- Products can be deactivated (soft-delete) and reactivated.
+- When building a quote, sales users see a product picker dropdown that pre-fills line item fields (description, unit price, item type).
+- Selecting a product with unit "hour" sets the line item to "hourly" billing type.
+- A "Custom item (blank)" option is always available for freeform entries not in the catalog.
+- All line item fields remain editable after selection from the catalog.
+
 ### Quote request ingestion
 
-- Webhook endpoint accepts POST from WordPress form.
-- Incoming payload is mapped to a “quote request” (or draft quote) in the portal.
-- Idempotency and duplicate handling as needed (e.g. idempotency key in payload).
+- Webhook endpoint accepts POST from any external form or integration.
+- Incoming payload is mapped to a "quote request" in the portal.
+- Idempotency and duplicate handling via optional idempotency key.
+- Webhook requests are verified using HMAC-SHA256 signature.
 
 ### Portal quote list
 
 - List all quotes with status: e.g. request, draft, finalised, sent, viewed, accepted, rejected.
 - **Filter** on every visible column: status, customer name, email, phone, service, cities/site, quote number, total, assigned sales rep, and date range (created, finalised, accepted).
 - **Search** by free-text across customer name, email, quote number, service, and cities.
-- **Sort** on any column (ascending / descending): customer name, status, quote number, total, date created, date finalised, date accepted, sales rep.
+- **Sort** on any column (ascending / descending).
 - Dashboard can scope to current month for totals.
 
 ### Quote finalisation and sharing
 
-- **Finalise quote** → system generates a unique, unguessable link; stores link and optional default message.
-- **Share flow:** Portal displays the link and default message; a **“Copy”** button copies the message (including the link) so the sales team can paste into Outlook and send **manually** (system does not send the quote email).
-- **Quote line items** can be **standard** (quantity × unit price) or **hourly** (schedule of date/time ranges × hourly rate). Hourly items store a schedule; the server computes total hours and line total. See [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md).
-- **Tax:** Quotes support **GST** and **PST** (e.g. GST 5%, PST 7%). Totals are computed server-side (subtotal + GST + PST).
+- **Finalise quote** → system generates a unique, unguessable link; stores link and optional default message (using configured company name).
+- **Share flow:** Portal displays the link and default message; a **"Copy"** button copies the message (including the link) so the sales team can paste into email and send **manually**.
+- **Quote line items** can be **standard** (quantity × unit price) or **hourly** (schedule of date/time ranges × hourly rate). See [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md).
+- **Tax:** Quotes support two configurable tax types (default: GST and PST). Labels and rates are configurable. Totals are computed server-side.
 
 ### Public quote page (by link)
 
 - Customer opens unique link (no login).
-- Page is a **branded, styled HTML page** showing the full quote details (including line-item schedule breakdown for hourly services, and GST/PST when applicable), company branding, and the **name, title, and profile photo** of the sales team member who generated the quote.
-- **Download/Print:** Customer can use browser print-to-PDF (`@media print` CSS) to save the quote. The printed version is cleanly formatted with branding and sales rep details.
-- **Accept flow:** At the bottom of the page, customer types their **name** and **title** (plain text inputs), checks an "I accept" checkbox, and clicks **"Accept Quote"**. No canvas/drawn signature — typed name is the electronic signature.
-- **Email verification before signing (optional):** If enabled, the system sends a one-time code to the customer's email before they can submit the accept form. Customer enters the code to prove they control the email address on the quote. This is configurable per quote or globally by admin — not required for MVP but should be supported.
-- On accept: set status to accepted; store signature data (name, title, timestamp, IP, and whether email was verified); send email to admin and to the sales team member; update dashboard status.
+- Page is a **branded, styled HTML page** showing: company branding from tenant config (name/logo, colors; tagline/phone/website if premium), full quote details (including line-item schedule breakdown and taxes), and the **name, title, and profile photo** of the sales team member.
+- **Download/Print:** Browser print-to-PDF (`@media print` CSS).
+- **Accept flow:** Customer types **name** and **title**, checks "I accept", clicks **"Accept Quote"**. Typed name is the electronic signature.
+- On accept: set status to accepted; store signature data; send email to admin and to the sales team member (using configured email addresses); update dashboard status.
 
 ### Dashboard
 
-- For the **current month**: **Estimate Total** (e.g. sum of finalised/sent quote totals) and **Accepted Total** (sum of accepted quote totals).
+- For the **current month**: **Estimate Total** and **Accepted Total**.
 - List or summary of quotes (with filters as above).
 
 ### Authentication and user management
 
 - Login for sales team and admin.
-- **Admin only:** create, edit, and delete/disable users (in the **Users** section). Create: name, email, password, title, role, optional profile photo. **Edit:** update name, email, title, role, optional new password, **profile photo**, or set active/inactive. Delete: soft-delete (set user inactive so they cannot log in); existing quotes remain attributed to the user.
+- **Admin only:** create, edit, and delete/disable users. Soft-delete (set user inactive).
 
 ### User profile
 
-- Sales and admin users have **name**, **title**, and **profile photo** (used on the public quote page and optionally in the portal).
-- **Profile section** (for the logged-in user) has an **Edit** button for all users.
-  - **Non-admin users:** can edit **profile picture only** (upload/change/remove); name and title are not editable on Profile (admin can change them in the Users section if needed).
-  - **Admin users:** can edit **profile picture only** on their own Profile page; to change their own name, email, title, or role they use the Users section (editing their own row) or the same edit capabilities as for other users.
-- Admin edits **all** user details (including profile picture) only in the **Users** section, not on the Profile page of another user.
+- Sales and admin users have **name**, **title**, and **profile photo**.
+- Non-admin users can edit profile picture only. Admin users edit all user details in the Users section.
 
 ---
 
 ## Non-Functional Requirements
 
-- **Security:** Authentication and role-based access; secure unique links; no sensitive data in URL path.
-- **Availability / performance:** Define targets (e.g. webhook SLA, portal response time); document in ARCHITECTURE.
-- **Audit:** Record who created/finalised/accepted a quote and when (for compliance and support).
+- **Security:** Authentication and role-based access; secure unique links; HMAC webhook verification; no sensitive data in URL path.
+- **Configurability:** All customer-specific values are configurable without code changes (via env vars or Settings page).
+- **Audit:** Record who created/finalised/accepted a quote and when.
 
 ---
 
@@ -110,9 +142,11 @@ Prioritised list. Each item should be traceable to the [Business Workflow](#busi
 
 Explicitly **not** in scope for this version:
 
-- **Sending the quote email from the system** — sending is manual via Outlook after copying link and message.
-- **Multi-tenant** — single company / single tenant only.
+- **Sending the quote email from the system** — sending is manual via email client after copying link and message.
+- **Multi-tenant (shared database)** — single-tenant deploys for now. Multi-tenant is a future phase (G4).
 - **Payment or invoicing** — unless added in a later phase.
+- **Custom domain support** — Phase G4 (future). Vercel-native feature.
+- **Bulk product import (CSV)** — Phase G4. Products are created one at a time via the portal.
 
 ---
 

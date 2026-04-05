@@ -11,9 +11,12 @@ import { useState } from "react";
 export default function AcceptForm({
   quoteId,
   onAccepted,
+  buttonStyle,
 }: {
   quoteId: string;
   onAccepted: () => void;
+  /** Optional brand color applied to the Accept button (secondaryColor from tenant theme). */
+  buttonStyle?: React.CSSProperties;
 }) {
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
@@ -114,7 +117,8 @@ export default function AcceptForm({
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-2.5 px-4 rounded-md bg-black text-white text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-2.5 px-4 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={buttonStyle ?? { backgroundColor: "#000000", color: "#ffffff" }}
         >
           {loading ? "Accepting..." : "Accept Quote"}
         </button>

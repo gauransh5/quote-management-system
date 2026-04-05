@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { loadTenantConfig } from "@/config/tenant";
 import PublicQuote from "./public-quote";
 
 /**
@@ -19,6 +20,7 @@ export default async function PublicQuotePage({
     where: { token },
     include: {
       items: { orderBy: { sortOrder: "asc" } },
+      sections: { orderBy: { sortOrder: "asc" } },
       user: {
         select: { name: true, title: true, photoUrl: true, email: true },
       },
@@ -42,6 +44,14 @@ export default async function PublicQuotePage({
     pstAmount: Number(quote.pstAmount ?? 0),
     total: Number(quote.total),
     notes: quote.notes,
+    projectAddress: quote.projectAddress,
+    expectedCompletionDate: quote.expectedCompletionDate?.toISOString() ?? null,
+    sections: quote.sections.map((s) => ({
+      id: s.id,
+      heading: s.heading,
+      body: s.body,
+      sortOrder: s.sortOrder,
+    })),
     validUntil: quote.validUntil?.toISOString() ?? null,
     finalisedAt: quote.finalisedAt?.toISOString() ?? null,
     acceptedAt: quote.acceptedAt?.toISOString() ?? null,
@@ -65,5 +75,7 @@ export default async function PublicQuotePage({
       : null,
   };
 
-  return <PublicQuote quote={serialized} />;
+  const tenant = await loadTenantConfig();
+
+  return <PublicQuote quote={serialized} tenant={tenant} />;
 }

@@ -15,6 +15,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { AUDIT_ACTION } from "@/lib/constants";
+import { loadTenantConfig } from "@/config/tenant";
 import { randomBytes } from "crypto";
 
 export async function POST(
@@ -56,10 +57,11 @@ export async function POST(
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const publicUrl = `${baseUrl}/q/${token}`;
 
+  const tenant = await loadTenantConfig();
   const defaultMessage = [
     `Hi ${quote.customerName},`,
     "",
-    `Thank you for your interest in Boss Security. Please find your quote (${quote.quoteNumber}) at the link below:`,
+    `Thank you for your interest in ${tenant.companyName}. Please find your quote (${quote.quoteNumber}) at the link below:`,
     "",
     publicUrl,
     "",
@@ -67,7 +69,7 @@ export async function POST(
     "",
     "Best regards,",
     session.user.name,
-    session.user.title ? `${session.user.title}, Boss Security` : "Boss Security",
+    session.user.title ? `${session.user.title}, ${tenant.companyName}` : tenant.companyName,
   ].join("\n");
 
   const updated = await prisma.$transaction(async (tx) => {

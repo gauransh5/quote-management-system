@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
         customerName: quoteRequest.name,
         customerEmail: quoteRequest.email,
         customerPhone: quoteRequest.phone,
+        leadSource: quoteRequest.leadSource,
       },
     });
     await tx.auditLog.create({

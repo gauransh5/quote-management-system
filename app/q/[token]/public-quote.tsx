@@ -15,6 +15,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import AcceptForm from "@/components/accept-form";
 import { getScheduleBreakdown } from "@/lib/schedule-hours";
+import { readableFontColor, resolveLogoHeight } from "@/lib/utils";
+import type { TenantConfig } from "@/config/tenant";
 
 interface QuoteItem {
   id: string;
@@ -26,6 +28,13 @@ interface QuoteItem {
   schedule?: { startDate: string; startTime: string; endDate?: string; endTime?: string }[] | null;
 }
 
+interface QuoteSection {
+  id: string;
+  heading: string;
+  body: string;
+  sortOrder: number;
+}
+
 interface PublicQuoteData {
   id: string;
   quoteNumber: string;
@@ -33,6 +42,8 @@ interface PublicQuoteData {
   customerName: string;
   customerEmail: string;
   customerPhone: string | null;
+  projectAddress: string | null;
+  expectedCompletionDate: string | null;
   subtotal: number;
   taxRate: number;
   taxAmount: number;
@@ -40,6 +51,7 @@ interface PublicQuoteData {
   pstAmount?: number;
   total: number;
   notes: string | null;
+  sections: QuoteSection[];
   validUntil: string | null;
   finalisedAt: string | null;
   acceptedAt: string | null;
@@ -58,9 +70,34 @@ interface PublicQuoteData {
   } | null;
 }
 
-export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
+export default function PublicQuote({ quote, tenant }: { quote: PublicQuoteData; tenant: TenantConfig }) {
   const router = useRouter();
   const [accepted, setAccepted] = useState(quote.status === "ACCEPTED");
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(tenant.locale, {
+      style: "currency",
+      currency: tenant.currency,
+    }).format(n);
+
+  // Compute theme values — premium tenants get full palette, non-premium get primaryColor only
+  // navbarColor overrides the header background independently from primaryColor (premium only)
+  const headerBg = (tenant.premiumBranding && tenant.navbarColor) ? tenant.navbarColor : tenant.primaryColor;
+  const headerFg = tenant.premiumBranding && tenant.fontColor
+    ? tenant.fontColor
+    : readableFontColor(headerBg);
+  const accentBg = tenant.premiumBranding && tenant.secondaryColor
+    ? tenant.secondaryColor
+    : tenant.primaryColor;
+  const accentFg = readableFontColor(accentBg);
+  const pageBg = tenant.premiumBranding && tenant.backgroundColor
+    ? tenant.backgroundColor
+    : undefined;
+
+  const acceptButtonStyle: React.CSSProperties = {
+    backgroundColor: accentBg,
+    color: accentFg,
+  };
   const [showChangesForm, setShowChangesForm] = useState(false);
   const [changesComment, setChangesComment] = useState("");
   const [changesSending, setChangesSending] = useState(false);
@@ -103,39 +140,75 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 print:bg-white">
-      <div className="max-w-3xl mx-auto py-8 px-6 print:py-0 print:px-0">
-        {/* Header with branding */}
-        <header className="flex items-start justify-between mb-8 print:mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-black">Boss Security</h1>
-            <p className="text-sm text-gray-500">
-              Professional Security Services
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Toll Free: +1 888-498-BOSS | bosssecurity.ca
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-lg font-bold">{quote.quoteNumber}</p>
-            <p className="text-sm text-gray-500">
-              {new Date(quote.finalisedAt ?? quote.createdAt).toLocaleDateString(
-                "en-CA",
-                { month: "long", day: "numeric", year: "numeric" }
+    <div
+      className="min-h-screen print:bg-white"
+      style={pageBg ? { backgroundColor: pageBg } : { backgroundColor: "#f9fafb" }}
+    >
+      <div className="max-w-3xl mx-auto print:py-0 print:px-0">
+        {/* Header with brand colors — full-width color bar */}
+        <header
+          className="px-6 py-6 mb-8 print:mb-6"
+          style={{ backgroundColor: headerBg, color: headerFg }}
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              {tenant.companyLogoUrl ? (
+                <>
+                  <img
+                    src={tenant.companyLogoUrl}
+                    alt={tenant.companyName}
+                    style={{ height: resolveLogoHeight(tenant.logoSize) }}
+                    className="object-contain mb-1"
+                  />
+                  {tenant.showCompanyName && (
+                    <p className="font-semibold text-sm mt-0.5">{tenant.companyName}</p>
+                  )}
+                </>
+              ) : (
+                <h1 className="text-2xl font-bold">{tenant.companyName}</h1>
               )}
-            </p>
-            {quote.validUntil && (
-              <p className="text-xs text-gray-400">
-                Valid until:{" "}
-                {new Date(quote.validUntil).toLocaleDateString("en-CA", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+              {tenant.premiumBranding && tenant.companyTagline && (
+                <p className="text-sm mt-0.5" style={{ color: headerFg, opacity: 0.8 }}>{tenant.companyTagline}</p>
+              )}
+              {tenant.premiumBranding && (tenant.companyPhone || tenant.companyWebsite) && (
+                <p className="text-xs mt-1" style={{ color: headerFg, opacity: 0.65 }}>
+                  {[tenant.companyPhone, tenant.companyWebsite].filter(Boolean).join(" | ")}
+                </p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-bold">{quote.quoteNumber}</p>
+              <p className="text-sm" style={{ color: headerFg, opacity: 0.8 }}>
+                {new Date(quote.finalisedAt ?? quote.createdAt).toLocaleDateString(
+                  tenant.locale,
+                  { month: "long", day: "numeric", year: "numeric" }
+                )}
               </p>
-            )}
+              {quote.validUntil && (
+                <p className="text-xs" style={{ color: headerFg, opacity: 0.65 }}>
+                  Valid until:{" "}
+                  {new Date(quote.validUntil).toLocaleDateString(tenant.locale, {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              )}
+              {quote.expectedCompletionDate && (
+                <p className="text-xs" style={{ color: headerFg, opacity: 0.65 }}>
+                  Expected completion:{" "}
+                  {new Date(quote.expectedCompletionDate).toLocaleDateString(tenant.locale, {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              )}
+            </div>
           </div>
         </header>
+
+        <div className="px-6 pb-8 print:px-0" style={pageBg ? { backgroundColor: pageBg } : undefined}>
 
         {/* Customer + Sales rep info */}
         <div className="grid grid-cols-2 gap-8 mb-8 print:mb-6">
@@ -147,6 +220,9 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
             <p className="text-sm text-gray-600">{quote.customerEmail}</p>
             {quote.customerPhone && (
               <p className="text-sm text-gray-600">{quote.customerPhone}</p>
+            )}
+            {quote.projectAddress && (
+              <p className="text-sm text-gray-600 mt-1">{quote.projectAddress}</p>
             )}
           </div>
           <div className="text-right">
@@ -196,9 +272,9 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
                       {isHourly && breakdown.length > 0 && (
                         <div className="mt-1 text-xs text-gray-600 space-y-1">
                           {breakdown.map((row, i) => {
-                            const startDateFmt = row.startDate ? new Date(row.startDate + "T00:00:00").toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" }) : "";
+                            const startDateFmt = row.startDate ? new Date(row.startDate + "T00:00:00").toLocaleDateString(tenant.locale, { month: "long", day: "numeric", year: "numeric" }) : "";
                             const endDate = row.endDate || row.startDate;
-                            const endDateFmt = endDate ? new Date(endDate + "T00:00:00").toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" }) : startDateFmt;
+                            const endDateFmt = endDate ? new Date(endDate + "T00:00:00").toLocaleDateString(tenant.locale, { month: "long", day: "numeric", year: "numeric" }) : startDateFmt;
                             const endTime = row.endTime ?? row.startTime ?? "";
                             const hrs = row.hours % 1 === 0 ? row.hours : row.hours.toFixed(2);
                             const hrsLabel = row.hours === 1 ? "hr" : "hrs";
@@ -226,15 +302,11 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
                       {isHourly && " hrs"}
                     </td>
                     <td className="py-3 text-right">
-                      ${item.unitPrice.toLocaleString("en-CA", {
-                        minimumFractionDigits: 2,
-                      })}
+                      {fmt(item.unitPrice)}
                       {isHourly && "/hr"}
                     </td>
                     <td className="py-3 text-right font-medium">
-                      ${item.subtotal.toLocaleString("en-CA", {
-                        minimumFractionDigits: 2,
-                      })}
+                      {fmt(item.subtotal)}
                     </td>
                   </tr>
                 );
@@ -246,39 +318,23 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
           <div className="mt-4 ml-auto max-w-xs space-y-1 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Subtotal</span>
-              <span>
-                ${quote.subtotal.toLocaleString("en-CA", {
-                  minimumFractionDigits: 2,
-                })}
-              </span>
+              <span>{fmt(quote.subtotal)}</span>
             </div>
             {quote.taxRate > 0 && (
               <div className="flex justify-between">
-                <span className="text-gray-500">GST @ {quote.taxRate}%</span>
-                <span>
-                  ${quote.taxAmount.toLocaleString("en-CA", {
-                    minimumFractionDigits: 2,
-                  })}
-                </span>
+                <span className="text-gray-500">{tenant.tax1Label} @ {quote.taxRate}%</span>
+                <span>{fmt(quote.taxAmount)}</span>
               </div>
             )}
             {(quote.pstRate ?? 0) > 0 && (
               <div className="flex justify-between">
-                <span className="text-gray-500">PST (MB) @ {quote.pstRate}%</span>
-                <span>
-                  ${(quote.pstAmount ?? 0).toLocaleString("en-CA", {
-                    minimumFractionDigits: 2,
-                  })}
-                </span>
+                <span className="text-gray-500">{tenant.tax2Label} @ {quote.pstRate}%</span>
+                <span>{fmt(quote.pstAmount ?? 0)}</span>
               </div>
             )}
             <div className="flex justify-between font-bold text-lg border-t-2 border-black pt-2">
               <span>Total</span>
-              <span>
-                ${quote.total.toLocaleString("en-CA", {
-                  minimumFractionDigits: 2,
-                })}
-              </span>
+              <span>{fmt(quote.total)}</span>
             </div>
           </div>
         </div>
@@ -292,6 +348,23 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
             <p className="text-sm text-gray-700 whitespace-pre-wrap">
               {quote.notes}
             </p>
+          </div>
+        )}
+
+        {/* Rich-text sections */}
+        {quote.sections?.length > 0 && (
+          <div className="mb-8 print:mb-6 space-y-6">
+            {quote.sections.map((section) => (
+              <div key={section.id}>
+                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
+                  {section.heading}
+                </p>
+                <div
+                  className="text-sm text-gray-700 prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: section.body }}
+                />
+              </div>
+            ))}
           </div>
         )}
 
@@ -321,7 +394,7 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
                         ` (${quote.signature.signedByTitle})`}
                       {" on "}
                       {new Date(quote.signature.signedAt).toLocaleDateString(
-                        "en-CA",
+                        tenant.locale,
                         { month: "long", day: "numeric", year: "numeric" }
                       )}
                     </>
@@ -333,7 +406,7 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
             </div>
           ) : (quote.status === "FINALISED" || quote.status === "CHANGES_REQUESTED") ? (
             <div className="space-y-4">
-              <AcceptForm quoteId={quote.id} onAccepted={handleAccepted} />
+              <AcceptForm quoteId={quote.id} onAccepted={handleAccepted} buttonStyle={acceptButtonStyle} />
 
               <div className="text-center">
                 <p className="text-sm text-gray-400 mb-2">or</p>
@@ -410,8 +483,9 @@ export default function PublicQuote({ quote }: { quote: PublicQuoteData }) {
 
         {/* Print footer — only visible in print */}
         <div className="hidden print:block mt-12 pt-4 border-t text-xs text-gray-400 text-center">
-          Boss Security | bosssecurity.ca | +1 888-498-BOSS
+          {[tenant.companyName, tenant.companyWebsite, tenant.companyPhone].filter(Boolean).join(" | ")}
         </div>
+        </div>{/* end px-6 pb-8 */}
       </div>
     </div>
   );

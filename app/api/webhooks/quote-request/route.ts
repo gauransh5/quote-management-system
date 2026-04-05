@@ -1,7 +1,7 @@
 /**
  * POST /api/webhooks/quote-request
  *
- * Accepts form submissions from the bosssecurity.ca WordPress site.
+ * Accepts inbound lead/quote request submissions via webhook.
  * Creates a QuoteRequest record in the database.
  *
  * Security: Validates HMAC-SHA256 signature from X-Webhook-Signature header.

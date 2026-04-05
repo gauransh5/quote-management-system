@@ -4,20 +4,31 @@
  * Quote detail client component.
  *
  * Three states:
- * - DRAFT: editable — add/remove items, change notes, save, finalise
+ * - DRAFT: editable — add/remove items, sections, change notes, save, finalise
  * - FINALISED: locked — shows link, default message, copy button
  * - ACCEPTED: locked — shows signature info
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { QUOTE_STATUS, QUOTE_STATUS_COLOR, QUOTE_STATUS_LABEL, AUDIT_ACTION_LABEL } from "@/lib/constants";
 import { totalHoursFromSchedule, getScheduleBreakdown } from "@/lib/schedule-hours";
+
+const LEAD_SOURCE_LABELS: Record<string, string> = {
+  website: "Website",
+  social_media: "Social Media",
+  referral: "Referral",
+  phone: "Phone / Walk-in",
+  other: "Other",
+};
 
 /** One row in an hourly schedule: start/end date and time (end can be next day). */
 export type ScheduleRow = {
@@ -38,6 +49,13 @@ interface QuoteItem {
   schedule?: ScheduleRow[] | null;
 }
 
+interface QuoteSection {
+  id?: string;
+  heading: string;
+  body: string;
+  sortOrder: number;
+}
+
 interface Quote {
   id: string;
   quoteNumber: string;
@@ -45,6 +63,9 @@ interface Quote {
   customerName: string;
   customerEmail: string;
   customerPhone: string | null;
+  projectAddress: string | null;
+  expectedCompletionDate: string | null;
+  leadSource: string;
   subtotal: number;
   taxRate: number;
   taxAmount: number;
@@ -58,6 +79,7 @@ interface Quote {
   acceptedAt: string | null;
   createdAt: string;
   items: QuoteItem[];
+  sections: QuoteSection[];
   request: {
     service: string | null;
     cities: string[];
@@ -90,12 +112,116 @@ interface Quote {
 
 const statusColors = QUOTE_STATUS_COLOR;
 
+interface CatalogProduct {
+  id: string;
+  name: string;
+  defaultPrice: number | null;
+  unit: string;
+  description: string | null;
+}
+
+interface CatalogTemplate {
+  id: string;
+  name: string;
+  items: {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    itemType: "standard" | "hourly";
+    sortOrder: number;
+  }[];
+}
+
+/**
+ * Tiptap-based rich-text editor for a single quote section.
+ * Extracted as its own component so each section gets its own editor instance.
+ */
+function SectionEditor({
+  section,
+  disabled,
+  onHeadingChange,
+  onBodyChange,
+  onRemove,
+}: {
+  section: QuoteSection;
+  disabled: boolean;
+  onHeadingChange: (v: string) => void;
+  onBodyChange: (v: string) => void;
+  onRemove: () => void;
+}) {
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: section.body || "",
+    editable: !disabled,
+    immediatelyRender: false,
+    onUpdate({ editor }) {
+      onBodyChange(editor.getHTML());
+    },
+  });
+
+  return (
+    <div className="space-y-2 border rounded-md p-4">
+      <div className="flex items-center gap-2">
+        <Input
+          value={section.heading}
+          onChange={(e) => onHeadingChange(e.target.value)}
+          placeholder="Section heading (e.g. Inclusions, Terms & Conditions)"
+          className="font-medium"
+          disabled={disabled}
+        />
+        {!disabled && (
+          <Button type="button" variant="ghost" size="sm" onClick={onRemove} className="text-red-500 hover:text-red-700 shrink-0">
+            Remove
+          </Button>
+        )}
+      </div>
+      {/* Tiptap toolbar — only shown when editable */}
+      {!disabled && editor && (
+        <div className="flex gap-1 flex-wrap border-b pb-2">
+          {[
+            { label: "B", title: "Bold", cmd: () => editor.chain().focus().toggleBold().run(), active: editor.isActive("bold") },
+            { label: "I", title: "Italic", cmd: () => editor.chain().focus().toggleItalic().run(), active: editor.isActive("italic") },
+            { label: "•", title: "Bullet list", cmd: () => editor.chain().focus().toggleBulletList().run(), active: editor.isActive("bulletList") },
+            { label: "1.", title: "Ordered list", cmd: () => editor.chain().focus().toggleOrderedList().run(), active: editor.isActive("orderedList") },
+          ].map((btn) => (
+            <button
+              key={btn.title}
+              type="button"
+              title={btn.title}
+              onClick={btn.cmd}
+              className={cn(
+                "px-2 py-0.5 text-sm rounded border",
+                btn.active ? "bg-black text-white border-black" : "border-gray-300 hover:bg-gray-100"
+              )}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <EditorContent
+        editor={editor}
+        className={cn(
+          "min-h-[80px] text-sm prose prose-sm max-w-none focus-within:outline-none",
+          disabled ? "opacity-60" : "border rounded p-2"
+        )}
+      />
+    </div>
+  );
+}
+
 export default function QuoteDetail({
   quote: initialQuote,
   currentUserId,
+  taxLabels = { tax1: "GST", tax2: "PST" },
+  products = [],
+  templates = [],
 }: {
   quote: Quote;
   currentUserId: string;
+  taxLabels?: { tax1: string; tax2: string };
+  products?: CatalogProduct[];
+  templates?: CatalogTemplate[];
 }) {
   const router = useRouter();
   const [items, setItems] = useState<QuoteItem[]>(
@@ -104,12 +230,27 @@ export default function QuoteDetail({
       : [{ description: "", quantity: 1, unitPrice: 0, subtotal: 0, sortOrder: 0, itemType: "standard" }]
   );
   const [notes, setNotes] = useState(initialQuote.notes ?? "");
+  const [projectAddress, setProjectAddress] = useState(initialQuote.projectAddress ?? "");
+  const [expectedCompletionDate, setExpectedCompletionDate] = useState(
+    initialQuote.expectedCompletionDate
+      ? new Date(initialQuote.expectedCompletionDate).toISOString().split("T")[0]
+      : ""
+  );
+  const [leadSource, setLeadSource] = useState(initialQuote.leadSource ?? "website");
+  const [sections, setSections] = useState<QuoteSection[]>(initialQuote.sections ?? []);
   const [taxRate, setTaxRate] = useState(initialQuote.taxRate);
   const [pstRate, setPstRate] = useState(initialQuote.pstRate ?? 0);
   const [saving, setSaving] = useState(false);
   const [finalising, setFinalising] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Save as template state
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [saveTemplateError, setSaveTemplateError] = useState("");
+  const [saveTemplateDone, setSaveTemplateDone] = useState(false);
 
   const isDraft = initialQuote.status === QUOTE_STATUS.DRAFT;
   const isFinalised = initialQuote.status === QUOTE_STATUS.FINALISED || initialQuote.status === QUOTE_STATUS.CHANGES_REQUESTED;
@@ -135,13 +276,83 @@ export default function QuoteDetail({
     ]);
   }
 
+  function addFromProduct(product: CatalogProduct) {
+    const itemType = product.unit === "hour" ? "hourly" : "standard";
+    setItems([
+      ...items,
+      {
+        description: product.name,
+        quantity: itemType === "hourly" ? 0 : 1,
+        unitPrice: product.defaultPrice ?? 0,
+        subtotal: product.defaultPrice ?? 0,
+        sortOrder: items.length,
+        itemType: itemType as "standard" | "hourly",
+      },
+    ]);
+  }
+
+  function loadTemplate(template: CatalogTemplate) {
+    const hasContent = items.some((i) => i.description.trim());
+    if (hasContent && !confirm(`Load template "${template.name}"? This will replace all current line items.`)) return;
+    setItems(
+      template.items.map((item, idx) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        subtotal: item.quantity * item.unitPrice,
+        sortOrder: idx,
+        itemType: item.itemType,
+      }))
+    );
+  }
+
+  async function handleSaveAsTemplate() {
+    setSaveTemplateError("");
+    if (!saveTemplateName.trim()) {
+      setSaveTemplateError("Template name is required.");
+      return;
+    }
+    const validItems = items.filter((i) => i.description.trim());
+    if (validItems.length === 0) {
+      setSaveTemplateError("Quote must have at least one item.");
+      return;
+    }
+    setSavingTemplate(true);
+    const res = await fetch("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: saveTemplateName.trim(),
+        items: validItems.map((item, idx) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          itemType: item.itemType ?? "standard",
+          sortOrder: idx,
+        })),
+      }),
+    });
+    setSavingTemplate(false);
+    if (!res.ok) {
+      const data = await res.json();
+      setSaveTemplateError(data.error || "Failed to save template");
+      return;
+    }
+    setSaveTemplateDone(true);
+    setTimeout(() => {
+      setShowSaveTemplate(false);
+      setSaveTemplateName("");
+      setSaveTemplateDone(false);
+    }, 1500);
+  }
+
   function removeItem(index: number) {
     setItems(items.filter((_, i) => i !== index));
   }
 
   function updateItem(index: number, field: keyof QuoteItem, value: string | number | ScheduleRow[] | undefined) {
     const updated = [...items];
-    (updated[index] as Record<string, unknown>)[field] = value;
+    (updated[index] as unknown as Record<string, unknown>)[field] = value;
     const item = updated[index];
     if (item.itemType === "hourly" && item.schedule?.length) {
       item.quantity = totalHoursFromSchedule(item.schedule);
@@ -161,6 +372,33 @@ export default function QuoteDetail({
     setItems(updated);
   }
 
+  /** Builds the PUT payload for a save or pre-finalise auto-save. */
+  function buildSavePayload(validItems: QuoteItem[]) {
+    return {
+      items: validItems.map((item, i) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        sortOrder: i,
+        itemType: item.itemType ?? "standard",
+        schedule: item.itemType === "hourly" && item.schedule?.length ? item.schedule : undefined,
+      })),
+      sections: sections.filter((s) => s.heading.trim()).map((s, i) => ({
+        heading: s.heading,
+        body: s.body,
+        sortOrder: i,
+      })),
+      notes: notes || undefined,
+      projectAddress: projectAddress || null,
+      expectedCompletionDate: expectedCompletionDate
+        ? new Date(expectedCompletionDate).toISOString()
+        : null,
+      leadSource,
+      taxRate,
+      pstRate,
+    };
+  }
+
   async function handleSave() {
     setError("");
     setSaving(true);
@@ -175,19 +413,7 @@ export default function QuoteDetail({
     const res = await fetch(`/api/quotes/${initialQuote.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: validItems.map((item, i) => ({
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          sortOrder: i,
-          itemType: item.itemType ?? "standard",
-          schedule: item.itemType === "hourly" && item.schedule?.length ? item.schedule : undefined,
-        })),
-        notes: notes || undefined,
-        taxRate,
-        pstRate,
-      }),
+      body: JSON.stringify(buildSavePayload(validItems)),
     });
 
     setSaving(false);
@@ -218,19 +444,7 @@ export default function QuoteDetail({
     const saveRes = await fetch(`/api/quotes/${initialQuote.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: validItems.map((item, i) => ({
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          sortOrder: i,
-          itemType: item.itemType ?? "standard",
-          schedule: item.itemType === "hourly" && item.schedule?.length ? item.schedule : undefined,
-        })),
-        notes: notes || undefined,
-        taxRate,
-        pstRate,
-      }),
+      body: JSON.stringify(buildSavePayload(validItems)),
     });
 
     if (!saveRes.ok) {
@@ -360,6 +574,50 @@ export default function QuoteDetail({
           </CardContent>
         </Card>
       )}
+
+      {/* Quote metadata — lead source, project address, expected completion */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Quote Details</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="leadSource">Lead Source</Label>
+            <Select value={leadSource} onValueChange={(v) => { if (v) setLeadSource(v); }}>
+              <SelectTrigger id="leadSource" className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(LEAD_SOURCE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="projectAddress">Project Address</Label>
+              <Input
+                id="projectAddress"
+                value={projectAddress}
+                onChange={(e) => setProjectAddress(e.target.value)}
+                placeholder="123 Main St, Vancouver, BC"
+                disabled={!isDraft}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="expectedCompletionDate">Expected Completion</Label>
+              <Input
+                id="expectedCompletionDate"
+                type="date"
+                value={expectedCompletionDate}
+                onChange={(e) => setExpectedCompletionDate(e.target.value)}
+                disabled={!isDraft}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Customer feedback / change requests */}
       {initialQuote.changeRequests.length > 0 && (
@@ -736,9 +994,54 @@ export default function QuoteDetail({
             ))}
 
             {isDraft && (
-              <Button variant="outline" size="sm" onClick={addItem}>
-                + Add Item
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {products.length > 0 ? (
+                  <select
+                    className="h-8 rounded-md border px-2 text-sm text-muted-foreground"
+                    value=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__custom__") {
+                        addItem();
+                      } else {
+                        const product = products.find((p) => p.id === val);
+                        if (product) addFromProduct(product);
+                      }
+                      e.target.value = "";
+                    }}
+                  >
+                    <option value="" disabled>+ Add Item...</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}{p.defaultPrice != null ? ` ($${p.defaultPrice.toFixed(2)}/${p.unit})` : ""}
+                      </option>
+                    ))}
+                    <option value="__custom__">Custom item (blank)</option>
+                  </select>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={addItem}>
+                    + Add Item
+                  </Button>
+                )}
+                {templates.length > 0 && (
+                  <select
+                    className="h-8 rounded-md border px-2 text-sm text-muted-foreground"
+                    value=""
+                    onChange={(e) => {
+                      const tmpl = templates.find((t) => t.id === e.target.value);
+                      if (tmpl) loadTemplate(tmpl);
+                      e.target.value = "";
+                    }}
+                  >
+                    <option value="" disabled>Load Template...</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.items.length} item{t.items.length !== 1 ? "s" : ""})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
             )}
           </div>
 
@@ -749,7 +1052,7 @@ export default function QuoteDetail({
               <span className="text-right tabular-nums">${subtotal.toLocaleString("en-CA", { minimumFractionDigits: 2 })}</span>
 
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-muted-foreground shrink-0">GST</span>
+                <span className="text-muted-foreground shrink-0">{taxLabels.tax1}</span>
                 {isDraft ? (
                   <>
                     <Input
@@ -770,7 +1073,7 @@ export default function QuoteDetail({
               <span className="text-right tabular-nums">${taxAmount.toLocaleString("en-CA", { minimumFractionDigits: 2 })}</span>
 
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-muted-foreground shrink-0">PST</span>
+                <span className="text-muted-foreground shrink-0">{taxLabels.tax2}</span>
                 {isDraft ? (
                   <>
                     <Input
@@ -812,6 +1115,94 @@ export default function QuoteDetail({
           />
         </CardContent>
       </Card>
+
+      {/* Rich-text Sections */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">Sections</CardTitle>
+            {isDraft && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setSections((prev) => [
+                    ...prev,
+                    { heading: "", body: "", sortOrder: prev.length },
+                  ])
+                }
+              >
+                + Add Section
+              </Button>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Freeform blocks that appear on the quote page — inclusions, terms, notes, etc.
+          </p>
+        </CardHeader>
+        {sections.length > 0 && (
+          <CardContent className="space-y-6">
+            {sections.map((section, idx) => (
+              <SectionEditor
+                key={idx}
+                section={section}
+                disabled={!isDraft}
+                onHeadingChange={(v) =>
+                  setSections((prev) =>
+                    prev.map((s, i) => (i === idx ? { ...s, heading: v } : s))
+                  )
+                }
+                onBodyChange={(v) =>
+                  setSections((prev) =>
+                    prev.map((s, i) => (i === idx ? { ...s, body: v } : s))
+                  )
+                }
+                onRemove={() =>
+                  setSections((prev) => prev.filter((_, i) => i !== idx))
+                }
+              />
+            ))}
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Save as Template */}
+      <div className="flex items-start gap-3">
+        {!showSaveTemplate ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(""); setSaveTemplateError(""); setSaveTemplateDone(false); }}
+          >
+            Save as Template
+          </Button>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap">
+            {saveTemplateDone ? (
+              <p className="text-sm text-green-600">Template saved!</p>
+            ) : (
+              <>
+                <Input
+                  value={saveTemplateName}
+                  onChange={(e) => setSaveTemplateName(e.target.value)}
+                  placeholder="Template name"
+                  className="h-8 w-52 text-sm"
+                  onKeyDown={(e) => e.key === "Enter" && handleSaveAsTemplate()}
+                />
+                <Button size="sm" onClick={handleSaveAsTemplate} disabled={savingTemplate}>
+                  {savingTemplate ? "Saving..." : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowSaveTemplate(false)}>
+                  Cancel
+                </Button>
+                {saveTemplateError && <p className="text-xs text-red-600">{saveTemplateError}</p>}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Actions */}
       {error && <p className="text-sm text-red-600">{error}</p>}

@@ -80,33 +80,6 @@ export const LEAD_SOURCE_OPTIONS = [
 ] as const;
 
 // ──────────────────────────────────────────────
-// Services (matches bosssecurity.ca form)
-// ──────────────────────────────────────────────
-
-export const SERVICES = [
-  "Static Guard Services",
-  "Mobile Patrols",
-  "CCTV Installation",
-  "Remote Video Monitoring",
-  "Alarm Responses",
-  "Fire and Intrusion Alarm Monitoring",
-] as const;
-
-// ──────────────────────────────────────────────
-// Cities (matches bosssecurity.ca form)
-// ──────────────────────────────────────────────
-
-export const CITIES = [
-  "Winnipeg",
-  "Brandon",
-  "Regina",
-  "Saskatoon",
-  "Calgary",
-  "Edmonton",
-  "Toronto",
-] as const;
-
-// ──────────────────────────────────────────────
 // Audit log actions
 // ──────────────────────────────────────────────
 
@@ -137,12 +110,3 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   [AUDIT_ACTION.USER_DISABLED]: "User disabled",
 };
 
-// ──────────────────────────────────────────────
-// Email (Resend / notifications)
-// ──────────────────────────────────────────────
-
-/** Sender address for system emails (quote accepted, change requests, etc.). */
-export const EMAIL_FROM = "Boss Security <noreply@bosssecurity.ca>";
-
-/** Admin inbox for quote-accepted and change-request notifications. */
-export const EMAIL_ADMIN = "admin@bosssecurity.ca";

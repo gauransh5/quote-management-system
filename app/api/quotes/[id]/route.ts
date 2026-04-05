@@ -1,21 +1,26 @@
 /**
  * /api/quotes/[id]
  *
- * GET — Get full quote details (with items, request, user).
- * PUT — Update quote: items, notes, customer info. Recalculates totals.
+ * GET — Get full quote details (with items, sections, request, user).
+ * PUT — Update quote: items, sections, notes, customer info, project fields. Recalculates totals.
  *
  * PUT body:
  *   {
  *     items: [{ description, quantity, unitPrice, sortOrder?, itemType?, schedule? }],
+ *     sections?: [{ heading, body, sortOrder? }],  // rich-text sections (Tiptap HTML)
  *     notes?: string,
  *     customerName?: string,
  *     customerEmail?: string,
  *     customerPhone?: string,
- *     taxRate?: number,   // GST %
- *     pstRate?: number   // PST %
+ *     projectAddress?: string | null,
+ *     expectedCompletionDate?: string | null,  // ISO datetime string
+ *     leadSource?: "website"|"social_media"|"referral"|"phone"|"other",
+ *     taxRate?: number,   // Tax 1 % (e.g. GST)
+ *     pstRate?: number    // Tax 2 % (e.g. PST)
  *   }
  * For itemType "hourly", schedule is [{ startDate, startTime, endDate?, endTime? }];
- * server computes quantity (total hours) from schedule. Only DRAFT quotes can be edited.
+ * server computes quantity (total hours) from schedule.
+ * leadSource is editable in any status. All other fields require DRAFT status.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -42,10 +47,20 @@ const updateQuoteSchema = z.object({
       schedule: z.array(scheduleRowSchema).optional(),
     })
   ),
+  sections: z.array(
+    z.object({
+      heading: z.string().min(1),
+      body: z.string(),
+      sortOrder: z.number().int().optional(),
+    })
+  ).optional(),
   notes: z.string().optional(),
   customerName: z.string().min(1).optional(),
   customerEmail: z.email().optional(),
   customerPhone: z.string().optional(),
+  projectAddress: z.string().optional().nullable(),
+  expectedCompletionDate: z.string().datetime().optional().nullable(),
+  leadSource: z.enum(["website", "social_media", "referral", "phone", "other"]).optional(),
   taxRate: z.number().min(0).max(100).optional(),
   pstRate: z.number().min(0).max(100).optional(),
 });
@@ -65,6 +80,7 @@ export async function GET(
     where: { id },
     include: {
       items: { orderBy: { sortOrder: "asc" } },
+      sections: { orderBy: { sortOrder: "asc" } },
       request: true,
       user: {
         select: { id: true, name: true, title: true, photoUrl: true },
@@ -96,13 +112,6 @@ export async function PUT(
     return NextResponse.json({ error: "Quote not found" }, { status: 404 });
   }
 
-  if (quote.status !== "DRAFT") {
-    return NextResponse.json(
-      { error: "Only draft quotes can be edited" },
-      { status: 400 }
-    );
-  }
-
   const body = await request.json();
   const parsed = updateQuoteSchema.safeParse(body);
   if (!parsed.success) {
@@ -113,6 +122,42 @@ export async function PUT(
   }
 
   const data = parsed.data;
+
+  // leadSource is metadata — editable in any status.
+  // All other fields require DRAFT status.
+  const isDraft = quote.status === "DRAFT";
+  const hasContentChanges =
+    data.items !== undefined ||
+    data.sections !== undefined ||
+    data.notes !== undefined ||
+    data.customerName !== undefined ||
+    data.customerEmail !== undefined ||
+    data.customerPhone !== undefined ||
+    data.projectAddress !== undefined ||
+    data.expectedCompletionDate !== undefined ||
+    data.taxRate !== undefined ||
+    data.pstRate !== undefined;
+
+  if (hasContentChanges && !isDraft) {
+    return NextResponse.json(
+      { error: "Only draft quotes can be edited" },
+      { status: 400 }
+    );
+  }
+
+  // If only leadSource is changing, do a simple update and return.
+  if (!hasContentChanges && data.leadSource !== undefined) {
+    const updated = await prisma.quote.update({
+      where: { id },
+      data: { leadSource: data.leadSource },
+      include: {
+        items: { orderBy: { sortOrder: "asc" } },
+        sections: { orderBy: { sortOrder: "asc" } },
+      },
+    });
+    return NextResponse.json({ data: updated });
+  }
+
   const taxRate = data.taxRate ?? Number(quote.taxRate);
   const pstRate = data.pstRate ?? Number(quote.pstRate ?? 0);
 
@@ -121,11 +166,7 @@ export async function PUT(
     const isHourly = item.itemType === "hourly" && item.schedule && item.schedule.length > 0;
     const quantity = isHourly ? totalHoursFromSchedule(item.schedule) : item.quantity;
     const subtotal = quantity * item.unitPrice;
-    return {
-      ...item,
-      quantity,
-      subtotal,
-    };
+    return { ...item, quantity, subtotal };
   });
 
   const subtotal = resolvedItems.reduce((sum, item) => sum + item.subtotal, 0);
@@ -145,10 +186,25 @@ export async function PUT(
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           subtotal: item.subtotal,
-          schedule: item.itemType === "hourly" && item.schedule ? item.schedule : null,
+          schedule: item.itemType === "hourly" && item.schedule ? item.schedule as any : undefined,
           sortOrder: item.sortOrder ?? index,
         })),
       });
+    }
+
+    // Replace sections: delete existing, insert new set.
+    if (data.sections !== undefined) {
+      await tx.quoteSection.deleteMany({ where: { quoteId: id } });
+      if (data.sections.length > 0) {
+        await tx.quoteSection.createMany({
+          data: data.sections.map((s, i) => ({
+            quoteId: id,
+            heading: s.heading,
+            body: s.body,
+            sortOrder: s.sortOrder ?? i,
+          })),
+        });
+      }
     }
 
     return tx.quote.update({
@@ -164,9 +220,15 @@ export async function PUT(
         customerName: data.customerName ?? quote.customerName,
         customerEmail: data.customerEmail ?? quote.customerEmail,
         customerPhone: data.customerPhone ?? quote.customerPhone,
+        projectAddress: data.projectAddress !== undefined ? data.projectAddress : quote.projectAddress,
+        expectedCompletionDate: data.expectedCompletionDate !== undefined
+          ? (data.expectedCompletionDate ? new Date(data.expectedCompletionDate) : null)
+          : quote.expectedCompletionDate,
+        leadSource: data.leadSource ?? quote.leadSource,
       },
       include: {
         items: { orderBy: { sortOrder: "asc" } },
+        sections: { orderBy: { sortOrder: "asc" } },
       },
     });
   });

@@ -10,8 +10,8 @@
 import { z } from "zod/v4";
 
 /**
- * Schema for the WordPress webhook payload.
- * Matches the "Get a quote" form on bosssecurity.ca.
+ * Schema for the inbound webhook payload.
+ * Validates quote request submissions from external forms.
  */
 export const quoteRequestSchema = z.object({
   name: z.string().min(1, "Name is required"),

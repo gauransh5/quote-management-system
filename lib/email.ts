@@ -8,7 +8,7 @@
  * of sent — useful during development.
  */
 import { Resend } from "resend";
-import { EMAIL_ADMIN, EMAIL_FROM } from "@/lib/constants";
+import { loadTenantConfig } from "@/config/tenant";
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -47,6 +47,8 @@ export async function sendAcceptedEmails(params: AcceptedEmailParams) {
     total,
   } = params;
 
+  const tenant = await loadTenantConfig();
+  const emailFrom = `${tenant.emailFromName} <${tenant.emailFromAddress}>`;
   const subject = `Quote ${quoteNumber} Accepted by ${customerName}`;
   const quoteDetailsUrl = `${getPortalBaseUrl()}/quotes/${quoteId}`;
 
@@ -69,22 +71,22 @@ export async function sendAcceptedEmails(params: AcceptedEmailParams) {
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #666;">Total</td>
-          <td style="padding: 8px 0; font-weight: bold;">$${total.toLocaleString("en-CA", { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 8px 0; font-weight: bold;">${new Intl.NumberFormat(tenant.locale, { style: "currency", currency: tenant.currency }).format(total)}</td>
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #666;">Accepted At</td>
-          <td style="padding: 8px 0;">${acceptedAt.toLocaleString("en-CA", { dateStyle: "long", timeStyle: "short" })}</td>
+          <td style="padding: 8px 0;">${acceptedAt.toLocaleString(tenant.locale, { dateStyle: "long", timeStyle: "short" })}</td>
         </tr>
       </table>
       <p style="margin: 20px 0;">
         <a href="${quoteDetailsUrl}" style="display: inline-block; background: #111; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 600;">View quote in portal</a>
       </p>
-      <p style="color: #666; font-size: 14px;">— Boss Security Quote System</p>
+      <p style="color: #666; font-size: 14px;">— ${tenant.companyName}</p>
     </div>
   `;
 
-  const recipients = [EMAIL_ADMIN];
-  if (salesRepEmail !== EMAIL_ADMIN) {
+  const recipients = [tenant.emailAdminAddress];
+  if (salesRepEmail !== tenant.emailAdminAddress) {
     recipients.push(salesRepEmail);
   }
 
@@ -101,7 +103,7 @@ export async function sendAcceptedEmails(params: AcceptedEmailParams) {
   await Promise.all(
     recipients.map((to) =>
       resend.emails.send({
-        from: EMAIL_FROM,
+        from: emailFrom,
         to,
         subject,
         html: htmlBody,
@@ -126,6 +128,8 @@ export async function sendChangeRequestEmail(params: ChangeRequestEmailParams) {
   const { quoteNumber, quoteId, customerName, comment, salesRepName, salesRepEmail } =
     params;
 
+  const tenant = await loadTenantConfig();
+  const emailFrom = `${tenant.emailFromName} <${tenant.emailFromAddress}>`;
   const subject = `${customerName} has feedback on quote ${quoteNumber}`;
   const quoteDetailsUrl = `${getPortalBaseUrl()}/quotes/${quoteId}`;
 
@@ -140,12 +144,12 @@ export async function sendChangeRequestEmail(params: ChangeRequestEmailParams) {
         <a href="${quoteDetailsUrl}" style="display: inline-block; background: #111; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 600;">View quote & feedback in portal</a>
       </p>
       <p style="color: #666; font-size: 14px;">Please follow up with the customer to discuss their feedback.</p>
-      <p style="color: #666; font-size: 14px;">— Boss Security Quote System</p>
+      <p style="color: #666; font-size: 14px;">— ${tenant.companyName}</p>
     </div>
   `;
 
-  const recipients = [EMAIL_ADMIN];
-  if (salesRepEmail !== EMAIL_ADMIN) {
+  const recipients = [tenant.emailAdminAddress];
+  if (salesRepEmail !== tenant.emailAdminAddress) {
     recipients.push(salesRepEmail);
   }
 
@@ -162,7 +166,7 @@ export async function sendChangeRequestEmail(params: ChangeRequestEmailParams) {
   await Promise.all(
     recipients.map((to) =>
       resend.emails.send({
-        from: EMAIL_FROM,
+        from: emailFrom,
         to,
         subject,
         html: htmlBody,

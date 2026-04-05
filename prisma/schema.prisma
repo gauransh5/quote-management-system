@@ -1,12 +1,16 @@
 /// Quote Management System — Database Schema
 ///
 /// Models:
-///   User          — Sales team and admin users who log into the portal
-///   QuoteRequest  — Incoming requests from the WordPress webhook
-///   Quote         — Quotes built by sales from requests, with line items
-///   QuoteItem     — Individual line items within a quote
-///   Signature     — Typed signature data when a customer accepts
-///   AuditLog      — Tracks who did what and when
+///   TenantSettings    — Singleton row for branding, email, and tax config
+///   User              — Sales team and admin users who log into the portal
+///   Product           — Product/service catalog managed by admins
+///   QuoteTemplate     — Reusable named sets of line items (admin-managed)
+///   QuoteTemplateItem — Individual items within a QuoteTemplate
+///   QuoteRequest      — Incoming requests from the webhook
+///   Quote             — Quotes built by sales from requests, with line items
+///   QuoteItem         — Individual line items within a quote
+///   Signature         — Typed signature data when a customer accepts
+///   AuditLog          — Tracks who did what and when
 
 generator client {
   provider = "prisma-client"
@@ -15,6 +19,46 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────
+// Tenant Settings (singleton — one row per deploy)
+// ──────────────────────────────────────────────
+
+/// Branding, email, and tax configuration. Singleton row (id = "default").
+/// Admins edit via the Settings page. getTenantConfig() reads this with env var fallback.
+model TenantSettings {
+  id                String   @id @default("default")
+  companyName       String   @default("Quote Portal")
+  companyTagline    String?
+  companyPhone      String?
+  companyWebsite    String?
+  logoUrl           String?
+  /// Display height for the logo. Values: "sm" (24px) | "md" (40px) | "lg" (64px) | "xl" (96px) | numeric string for custom px
+  logoSize          String   @default("md")
+  /// When true, display both the logo image and the company name text together
+  showCompanyName   Boolean  @default(false)
+  primaryColor      String   @default("#000000")
+  accentColor       String   @default("#111827")
+  /// Premium: accent / CTA color (buttons, active nav, accept button on public quote page)
+  secondaryColor    String?
+  /// Premium: text color on primary-colored surfaces (sidebar, quote header). Auto-computed if null.
+  fontColor         String?
+  /// Premium: header / navbar background color. Falls back to primaryColor when null.
+  navbarColor       String?
+  /// Premium: page background color (portal content area + public quote page body)
+  backgroundColor   String?
+  emailFromName     String?
+  emailFromAddress  String?
+  emailAdminAddress String?
+  tax1Label         String   @default("GST")
+  tax2Label         String   @default("PST")
+  locale            String   @default("en-CA")
+  currency          String   @default("CAD")
+  premiumBranding   Boolean  @default(false)
+  footerText        String?
+
+  updatedAt         DateTime @updatedAt
 }
 
 // ──────────────────────────────────────────────
@@ -48,10 +92,67 @@ model User {
 }
 
 // ──────────────────────────────────────────────
-// Quote Requests (from WordPress webhook)
+// Products (admin-managed catalog)
 // ──────────────────────────────────────────────
 
-/// Incoming quote requests from the bosssecurity.ca WordPress form or other channels.
+/// Product/service catalog. Admins manage these via the portal.
+/// When building a quote, sales users can pick from the catalog to pre-fill line items.
+model Product {
+  id            String   @id @default(cuid())
+  name          String
+  sku           String?  @unique
+  description   String?
+  category      String?
+  defaultPrice  Decimal? @db.Decimal(10, 2)
+  /// Unit of measure: "unit", "hour", "month", "day". Maps to QuoteItem.itemType ("hour" → "hourly").
+  unit          String   @default("unit")
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([active])
+  @@index([category])
+}
+
+// ──────────────────────────────────────────────
+// Quote Templates (reusable line-item sets)
+// ──────────────────────────────────────────────
+
+/// Admin-managed templates: named sets of line items that can be loaded into a quote.
+/// Loading a template pre-fills all line items in the quote builder at once.
+model QuoteTemplate {
+  id        String              @id @default(cuid())
+  name      String
+  items     QuoteTemplateItem[]
+
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+}
+
+/// One line item within a QuoteTemplate.
+/// Mirrors the structure of QuoteItem but without quote/schedule — templates hold standard items only.
+model QuoteTemplateItem {
+  id          String        @id @default(cuid())
+  templateId  String
+  template    QuoteTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Decimal       @db.Decimal(10, 2) @default(1)
+  unitPrice   Decimal       @db.Decimal(10, 2) @default(0)
+  /// "standard" | "hourly"
+  itemType    String        @default("standard")
+  sortOrder   Int           @default(0)
+
+  @@index([templateId])
+}
+
+// ──────────────────────────────────────────────
+// Quote Requests (from webhook)
+// ──────────────────────────────────────────────
+
+/// Incoming quote requests from the webhook or other channels.
 /// Each request can be converted into a Quote by a sales user.
 model QuoteRequest {
   id              String   @id @default(cuid())
@@ -124,12 +225,20 @@ model Quote {
   /// Notes visible to the customer on the quote page
   notes           String?
 
+  /// Optional project-level fields visible on the public quote page
+  projectAddress         String?
+  expectedCompletionDate DateTime?
+
+  /// Where this lead came from — mirrored from QuoteRequest on creation, editable thereafter
+  leadSource      String   @default("website")
+
   /// Generated after finalisation
   token           String?     @unique
   defaultMessage  String?
   validUntil      DateTime?
 
   items           QuoteItem[]
+  sections        QuoteSection[]
   signature       Signature?
   auditLogs       AuditLog[]
 
@@ -141,6 +250,7 @@ model Quote {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+  @@index([leadSource])
 }
 
 /// A single line item in a quote.
@@ -165,6 +275,29 @@ model QuoteItem {
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([quoteId])
+}
+
+// ──────────────────────────────────────────────
+// Quote Sections (rich-text blocks)
+// ──────────────────────────────────────────────
+
+/// Freeform rich-text sections on a quote (e.g. Inclusions, Terms, Custom Notes).
+/// Rendered below the line items on the public quote page.
+/// Body is Tiptap-generated HTML.
+model QuoteSection {
+  id        String   @id @default(cuid())
+
+  quoteId   String
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  heading   String
+  body      String   // Tiptap HTML
+  sortOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([quoteId])
 }

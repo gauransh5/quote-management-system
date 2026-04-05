@@ -15,6 +15,7 @@ import { prisma } from "./db";
 export const authOptions: NextAuthOptions = {
   // Allow requests from the current host (e.g. localhost:3001 in dev when 3000 is in use).
   // Prevents CLIENT_FETCH_ERROR when NEXTAUTH_URL and actual origin differ.
+  // @ts-expect-error trustHost exists at runtime but not in NextAuth v4 types
   trustHost: true,
 
   providers: [

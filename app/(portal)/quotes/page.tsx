@@ -53,7 +53,7 @@ export default async function QuotesPage() {
     <div>
       <h1 className="text-2xl font-bold">Quotes</h1>
       <p className="text-muted-foreground mt-1">
-        Incoming quote requests from bosssecurity.ca
+        Manage quote requests and quotes
       </p>
       <QuoteRequestList requests={serialized} />
     </div>

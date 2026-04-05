@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-import { LEAD_SOURCE_OPTIONS, SERVICES, CITIES } from "@/lib/constants";
+import { LEAD_SOURCE_OPTIONS } from "@/lib/constants";
 
 export default function CreateLeadForm({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -25,12 +25,6 @@ export default function CreateLeadForm({ onClose }: { onClose: () => void }) {
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [leadSource, setLeadSource] = useState("phone");
-
-  function toggleCity(city: string) {
-    setSelectedCities((prev) =>
-      prev.includes(city) ? prev.filter((c) => c !== city) : [...prev, city]
-    );
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -126,40 +120,31 @@ export default function CreateLeadForm({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="lead-service">Service</Label>
-            <select
-              id="lead-service"
-              value={service}
-              onChange={(e) => setService(e.target.value)}
-              className="w-full h-9 rounded-md border px-3 text-sm"
-            >
-              <option value="">Select a service...</option>
-              {SERVICES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Cities</Label>
-            <div className="flex flex-wrap gap-2">
-              {CITIES.map((city) => (
-                <button
-                  key={city}
-                  type="button"
-                  onClick={() => toggleCity(city)}
-                  className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                    selectedCities.includes(city)
-                      ? "bg-black text-white border-black"
-                      : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-                  }`}
-                >
-                  {city}
-                </button>
-              ))}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="lead-service">Service</Label>
+              <Input
+                id="lead-service"
+                value={service}
+                onChange={(e) => setService(e.target.value)}
+                placeholder="e.g. Security, Consulting"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lead-cities">Cities</Label>
+              <Input
+                id="lead-cities"
+                value={selectedCities.join(", ")}
+                onChange={(e) =>
+                  setSelectedCities(
+                    e.target.value
+                      .split(",")
+                      .map((c) => c.trim())
+                      .filter(Boolean)
+                  )
+                }
+                placeholder="e.g. Toronto, Vancouver"
+              />
             </div>
           </div>
 

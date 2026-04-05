@@ -1,22 +1,23 @@
 # Quote Management System
 
-Internal sales portal for **Boss Security** (bosssecurity.ca). Manages the full quote lifecycle: inbound leads → quote building → finalisation → customer acceptance → dashboard reporting.
+A white-label quote lifecycle tool for sales teams. Manages inbound leads → quote building → finalisation → customer acceptance → dashboard reporting. Fully configurable branding, tax labels, and email settings per deployment.
 
 ---
 
 ## Agent orientation
 
-Before implementing anything, read the three docs in order:
+Before implementing anything, read the docs in order:
 
 1. **[docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)** — what the system must do; acceptance criteria and out-of-scope list
 2. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how it is built; tech stack, API contracts, file layout, design decisions
 3. **[docs/STRATEGY.md](docs/STRATEGY.md)** — build order, phase scope, test plans
+4. **[docs/PRODUCT-PLAN.md](docs/PRODUCT-PLAN.md)** — genericization roadmap (product catalog, branding settings, future phases)
 
 > Rule: Requirements (what) → Architecture (how) → Strategy (order). If in doubt, resolve conflicts in that order.
 
-Additional design docs:
-- **[docs/DESIGN-hourly-service-and-pst.md](docs/DESIGN-hourly-service-and-pst.md)** — hourly line items, schedule JSON shape, PST, server-side calculation rules
-- **[.cursor/rules/](.cursor/rules/)** — Cursor rules enforced during development (document before implementing, server-side calculations)
+Additional docs:
+- **[docs/DESIGN-hourly-service-and-pst.md](docs/DESIGN-hourly-service-and-pst.md)** — hourly line items, schedule JSON shape, tax calculation rules
+- **[.claude/rules/](.claude/rules/)** — Claude Code rules (document before implementing, server-side calculations)
 
 ---
 
@@ -26,13 +27,14 @@ Additional design docs:
 |---|---|
 | App + API | Next.js 16 (App Router) — single deploy on Vercel |
 | Language | TypeScript everywhere |
-| Database | PostgreSQL on Supabase |
+| Database | PostgreSQL on Supabase (via connection pooler) |
 | ORM | Prisma 7 (generated client output: `generated/prisma/`) |
 | Auth | NextAuth v4 — credentials provider, ADMIN / SALES roles |
-| Email | Resend |
+| Email | Resend (sender configured via tenant config) |
 | Storage | Cloudflare R2 — profile photos |
 | UI | Tailwind CSS v4 + shadcn/ui |
 | Validation | Zod |
+| Config | `config/tenant.ts` — centralised tenant config from env vars |
 
 ---
 
@@ -40,10 +42,11 @@ Additional design docs:
 
 Single Next.js app. No separate backend.
 
+- `config/` — tenant configuration (company name, branding, email, tax labels)
 - `app/api/` — serverless API routes (Vercel functions locally via `npm run dev`)
 - `app/(portal)/` — authenticated portal pages (route group; layout applies auth guard)
 - `app/q/[token]/` — public customer-facing quote page (no auth, unique token only)
-- `lib/` — shared server-side logic (treat as service layer; imported by API routes and server components)
+- `lib/` — shared server-side logic (treat as service layer)
 - `components/` — React client components
 - `prisma/` — schema + migrations
 - `generated/prisma/` — Prisma-generated client (do not edit manually)
@@ -52,15 +55,23 @@ Single Next.js app. No separate backend.
 ### End-to-end flow
 
 ```
-WordPress form
-  └─ POST /api/webhooks/quote-request
+External form / website
+  └─ POST /api/webhooks/quote-request (HMAC-signed)
        └─ QuoteRequest created in DB (status: REQUEST)
             └─ Sales opens portal → creates Quote (status: DRAFT)
                  └─ Sales finalises → unique token generated (status: FINALISED)
-                      └─ Customer opens /q/[token]
+                      └─ Customer opens /q/[token] (branded with tenant config)
                            ├─ Accepts → Signature stored, emails sent (status: ACCEPTED)
                            └─ Requests changes → (status: CHANGES_REQUESTED)
 ```
+
+---
+
+## Tenant configuration
+
+All customer-specific values are in `config/tenant.ts`, read from environment variables. See [ARCHITECTURE.md — Tenant Configuration](docs/ARCHITECTURE.md#tenant-configuration) for full details.
+
+Key env vars: `COMPANY_NAME`, `PRIMARY_COLOR`, `ACCENT_COLOR`, `EMAIL_FROM_NAME`, `EMAIL_FROM_ADDRESS`, `EMAIL_ADMIN_ADDRESS`, `TAX1_LABEL`, `TAX2_LABEL`, `LOCALE`, `CURRENCY`.
 
 ---
 
@@ -69,15 +80,15 @@ WordPress form
 | Model | Purpose |
 |---|---|
 | `User` | Sales reps and admins. `name`, `title`, `photoUrl` appear on the public quote page. Soft-deleted via `active: false`. |
-| `QuoteRequest` | Inbound lead from webhook or created manually. `leadSource`: `"website"` (webhook) or `"phone"`, `"referral"`, etc. |
+| `QuoteRequest` | Inbound lead from webhook or created manually. `leadSource`: `"website"`, `"phone"`, `"referral"`, etc. |
 | `Quote` | Built quote. One-to-one with `QuoteRequest`. Statuses: `REQUEST → DRAFT → FINALISED → CHANGES_REQUESTED → ACCEPTED / REJECTED / EXPIRED`. |
 | `QuoteItem` | Line item. `itemType`: `"standard"` (qty × unitPrice) or `"hourly"` (schedule JSON → server computes total hours → quantity). |
 | `Signature` | Typed e-signature on customer accept. Stores name, title, IP, timestamp. |
 | `AuditLog` | Immutable event trail. Actions defined in `lib/constants.ts → AUDIT_ACTION`. |
 
 **Key schema rules:**
-- All monetary fields are `Decimal(10,2)`. Cast to `Number()` before sending to client (Prisma returns `Decimal` objects).
-- `QuoteItem.schedule` is `Json?` — shape: `{ startDate: string, startTime: string, endDate?: string, endTime?: string }[]`.
+- All monetary fields are `Decimal(10,2)`. Cast to `Number()` before sending to client.
+- `QuoteItem.schedule` is `Json?` — shape: `{ startDate, startTime, endDate?, endTime? }[]`.
 - Server always recomputes `quantity`, `subtotal`, `taxAmount`, `pstAmount`, `total` on every PUT. Client values are previews only.
 
 ---
@@ -86,7 +97,7 @@ WordPress form
 
 | Route | Methods | Auth | Purpose |
 |---|---|---|---|
-| `/api/webhooks/quote-request` | POST | HMAC secret | WordPress form submissions |
+| `/api/webhooks/quote-request` | POST | HMAC secret | Inbound lead submissions |
 | `/api/quotes` | GET, POST | Session | List all / create quote from request |
 | `/api/quotes/[id]` | GET, PUT, DELETE | Session | Quote detail / update / delete draft |
 | `/api/quotes/[id]/finalise` | POST | Session | Generate token, lock quote |
@@ -103,15 +114,15 @@ WordPress form
 
 ## Key constants (lib/constants.ts)
 
-All reference strings are defined here. Always import from here instead of using raw strings.
+Generic reference strings. Always import from here instead of using raw strings.
 
 - `QUOTE_STATUS` — status enum values
 - `QUOTE_STATUS_LABEL` — human-readable labels
 - `QUOTE_STATUS_COLOR` — Tailwind badge classes
 - `AUDIT_ACTION` — audit log action keys
 - `LEAD_SOURCE` — lead origin values
-- `SERVICES` / `CITIES` — matches bosssecurity.ca form options
-- `EMAIL_FROM` / `EMAIL_ADMIN` — sender and admin inbox addresses
+
+Customer-specific values (company name, email addresses, tax labels) are in `config/tenant.ts`, not here.
 
 ---
 
@@ -120,12 +131,27 @@ All reference strings are defined here. Always import from here instead of using
 Copy `.env.local` and fill in:
 
 ```env
-# Supabase PostgreSQL
+# Database (Supabase pooler connection)
 DATABASE_URL="postgresql://..."
 
 # NextAuth
 NEXTAUTH_SECRET="..."
 NEXTAUTH_URL="http://localhost:3000"
+
+# Tenant configuration
+COMPANY_NAME="Your Company"
+# COMPANY_TAGLINE="Your tagline"
+# COMPANY_PHONE="+1 555-000-0000"
+# COMPANY_WEBSITE="yourcompany.com"
+PRIMARY_COLOR="#000000"
+ACCENT_COLOR="#111827"
+EMAIL_FROM_NAME="Your Company"
+EMAIL_FROM_ADDRESS="noreply@yourcompany.com"
+EMAIL_ADMIN_ADDRESS="admin@yourcompany.com"
+TAX1_LABEL="GST"
+TAX2_LABEL="PST"
+LOCALE="en-CA"
+CURRENCY="CAD"
 
 # Cloudflare R2 (profile photo storage)
 R2_ACCOUNT_ID=""
@@ -136,7 +162,7 @@ R2_BUCKET_NAME=""
 # Resend (email notifications)
 RESEND_API_KEY=""
 
-# WordPress webhook shared secret (HMAC verification)
+# Webhook shared secret (HMAC verification)
 WEBHOOK_SECRET="..."
 ```
 
@@ -164,10 +190,14 @@ After any change to `prisma/schema.prisma`:
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Auth, webhook, user management, profiles | Done |
-| 2 | Quote builder, hourly items, GST/PST, finalise, copy link | Done |
+| 2 | Quote builder, hourly items, tax, finalise, copy link | Done |
 | 3 | Public quote page, accept flow, email notifications | Done |
 | 4 | Dashboard totals, quote list filter/search/sort, polish | Dashboard done; filter/search/sort TBD |
-| 5 | Mobile app (React Native + Expo) | Optional — not started |
+| G0 | Extract tenant config, remove hardcoded values | Done |
+| G1 | Product/SKU catalog (self-service) | Pending |
+| G2 | Branding & theme settings (portal UI) | Pending |
+| G3 | Genericize docs | Pending |
+| G4 | Polish & future-proofing (onboarding, templates, multi-tenant prep) | Pending |
 
 See [docs/STRATEGY.md](docs/STRATEGY.md) for per-phase test plans and build order.
 
@@ -180,4 +210,5 @@ See [docs/STRATEGY.md](docs/STRATEGY.md) for per-phase test plans and build orde
 - **All financial and hour calculations are server-authoritative.** Client-side totals are display previews only.
 - **Soft-delete users** — set `active: false`; never hard-delete. Existing quotes remain attributed.
 - **Unique quote token** — 32-byte cryptographically random, URL-safe. Generated on finalise. Invalidated on revise.
+- **Tenant config** — all customer-specific values flow through `config/tenant.ts`. Never hardcode company names, emails, or branding.
 - New code belongs in the directory matching [ARCHITECTURE.md — File Layout](docs/ARCHITECTURE.md#file-layout).

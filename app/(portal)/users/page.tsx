@@ -37,7 +37,7 @@ export default async function UsersPage() {
       <p className="text-muted-foreground mt-1">
         Manage sales team and admin accounts
       </p>
-      <UserManagement initialUsers={users} currentUserId={session.user.id} />
+      <UserManagement initialUsers={users.map(u => ({ ...u, createdAt: u.createdAt.toISOString() }))} currentUserId={session.user.id} />
     </div>
   );
 }
