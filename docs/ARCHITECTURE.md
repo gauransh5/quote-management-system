@@ -2,7 +2,7 @@
 
 **Version:** 2.0  
 **Last Updated:** March 2026  
-**Related docs:** [REQUIREMENTS.md](REQUIREMENTS.md) | [STRATEGY.md](STRATEGY.md)
+**Related docs:** [REQUIREMENTS.md](REQUIREMENTS.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md)
 
 This document describes **how** the system is built: components, data flow, integrations, and tech choices. AI agents should follow it for implementation and consistency.
 
@@ -97,10 +97,14 @@ Based on the "Get a quote" form on [bosssecurity.ca](https://bosssecurity.ca/):
 ## Data Flow
 
 1. **Quote request in:** WordPress form → API route (webhook) → creates record in Supabase → Portal list shows new request.
-2. **Finalise quote:** User finalises in Portal → API route generates cryptographically random token, stores default message → link and message available in Portal.
-3. **Copy to Outlook:** User clicks "Copy" in Portal → clipboard gets default message (including link); user pastes in Outlook and sends manually.
-4. **Customer opens link:** Customer opens link → public quote page (`/q/[token]`) loads quote by token from DB; customer can view, print-to-PDF, sign, accept.
-5. **Accept:** Customer accepts (and optionally signs) → API route updates status, sends "quote accepted" emails via Resend to admin and sales rep, dashboard data reflects new status.
+2. **Quote edit (draft):** Sales builds quote in Portal: line items (standard or hourly with schedule), GST/PST rates. PUT `/api/quotes/[id]` saves items; server computes subtotal, GST, PST, and total (and for hourly items, total hours from schedule). See [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md).
+3. **Finalise quote:** User finalises in Portal → API route generates cryptographically random token, stores default message → link and message available in Portal.
+4. **Copy to Outlook:** User clicks "Copy" in Portal → clipboard gets default message (including link); user pastes in Outlook and sends manually.
+5. **Customer opens link:** Customer opens link → public quote page (`/q/[token]`) loads quote by token from DB; customer can view (including schedule breakdown and GST/PST), print-to-PDF, sign, accept.
+6. **Accept:** Customer accepts (and optionally signs) → API route updates status, sends "quote accepted" emails via Resend to admin and sales rep, dashboard data reflects new status.
+7. **Change password:** Logged-in user submits current password and new password to PATCH `/api/users/me/password`. Server verifies current password with bcrypt, then hashes and stores the new password (same bcrypt cost as user creation). No re-login required until next session.
+8. **Admin user management:** Admin can edit a user via PATCH `/api/users/[id]` (name, email, title, role, optional new password, **photoUrl**, active flag) and delete via DELETE `/api/users/[id]`. Delete is a soft-delete (sets `active: false`); the user cannot log in and the list can filter or hide inactive users. Admin cannot delete their own account. Profile photos are uploaded to R2 via `POST /api/upload` (or similar); the returned URL is stored in `User.photoUrl`.
+9. **Profile edit (own):** The Profile section has an Edit button for all users. **Non-admin users** can edit **profile picture only**: upload via the same R2 upload API, then PATCH `/api/users/me` with `photoUrl` (or a dedicated `/api/users/me/photo` endpoint). Name and title are not editable on Profile for non-admins. **Admin users** can also edit their own profile picture only from the Profile page; to change their own name, email, title, or role they use the Users section.
 
 ---
 
@@ -161,6 +165,7 @@ Vercel free tier limits: 100 GB bandwidth, 100 hours serverless function executi
 - **Unique link:** Cryptographically random token (e.g. 32 bytes, URL-safe), stored and mapped to quote in DB. No sequential or guessable IDs in the public URL.
 - **Quote owner:** Each quote is linked to a user (sales rep) for page/PDF attribution (name, title, photo) and for "quote accepted" email recipient.
 - **Dashboard totals:** "Estimate total" and "Accepted total" for current month computed from DB (status + date filters) or materialised/cached if performance requires.
+- **Quote line items and tax:** Line items can be **standard** (quantity × unit price) or **hourly** (schedule JSON of date/time ranges; server computes total hours and line total). Quote has **GST** (taxRate, taxAmount) and **PST** (pstRate, pstAmount). All monetary and hour calculations are done on the server (single source of truth). See [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md).
 
 ---
 
@@ -168,7 +173,7 @@ Vercel free tier limits: 100 GB bandwidth, 100 hours serverless function executi
 
 - **Webhook:** Verify every request with shared secret or HMAC; reject unsigned or invalid requests.
 - **Public quote page:** Only the token in the path; no PII in URL; token must be unguessable and tied to a single quote.
-- **Portal:** Session-based auth (NextAuth); admin-only routes for user management (create/disable/delete users).
+- **Portal:** Session-based auth (NextAuth); admin-only routes for user management (create/disable/delete users; admin can edit all user details including profile picture in the Users section). Any authenticated user can change their own password via PATCH `/api/users/me/password` (current password verified with bcrypt before updating). Any authenticated user can update their own profile picture only via Profile (Edit button); non-admins cannot edit name/title from Profile.
 - **Data:** Passwords hashed; sensitive data not logged; audit events for create/finalise/accept.
 - **Supabase:** Row-level security (RLS) disabled; access controlled at the application layer via Prisma + auth middleware. Supabase service-role key used only server-side, never exposed to the client.
 
@@ -190,6 +195,8 @@ quote-management-system/
 │   │   │       └── page.tsx      # Quote detail / edit / finalise
 │   │   ├── users/
 │   │   │   └── page.tsx          # Admin: user management
+│   │   ├── profile/
+│   │   │   └── page.tsx          # Profile/account: change password
 │   │   └── layout.tsx            # Portal shell (sidebar, nav, auth guard)
 │   ├── q/
 │   │   └── [token]/
@@ -212,14 +219,21 @@ quote-management-system/
 │   │   │       └── accept/
 │   │   │           └── route.ts  # POST: customer accepts
 │   │   ├── users/
-│   │   │   └── route.ts          # GET, POST (admin only)
+│   │   │   ├── route.ts          # GET, POST (admin only)
+│   │   │   ├── [id]/
+│   │   │   │   └── route.ts      # PATCH (edit), DELETE (soft-delete, admin only)
+│   │   │   └── me/
+│   │   │       ├── password/
+│   │   │       │   └── route.ts  # PATCH: change password (current user)
+│   │   │       └── (optional) route.ts or photo/  # PATCH: own profile (e.g. photoUrl only)
 │   │   └── upload/
-│   │       └── route.ts          # POST: profile photo upload to R2
+│   │       └── route.ts          # POST: profile photo upload to R2 (returns URL for photoUrl)
 │   └── layout.tsx                # Root layout
 ├── lib/                          # Shared server-side logic
 │   ├── db.ts                     # Prisma client singleton
 │   ├── auth.ts                   # NextAuth config
 │   ├── email.ts                  # Resend helpers
+│   ├── schedule-hours.ts         # Hour calculation from schedule (hourly line items)
 │   ├── storage.ts                # R2 upload/download helpers
 │   └── validators.ts             # Zod schemas for request validation
 ├── components/                   # React UI components
@@ -234,7 +248,8 @@ quote-management-system/
 ├── docs/
 │   ├── REQUIREMENTS.md
 │   ├── ARCHITECTURE.md
-│   └── STRATEGY.md
+│   ├── STRATEGY.md
+│   └── DESIGN-hourly-service-and-pst.md   # Hourly items, schedule, PST
 ├── .cursor/rules/                # Cursor rules
 ├── .env.local                    # Local env vars (not committed)
 ├── package.json

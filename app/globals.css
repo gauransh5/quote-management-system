@@ -125,4 +125,10 @@
   html {
     @apply font-sans;
     }
+  /* Clickable elements show pointer and feel interactive */
+  button:not(:disabled),
+  a[href],
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }

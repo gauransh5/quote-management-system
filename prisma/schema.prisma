@@ -1,8 +1,12 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+/// Quote Management System — Database Schema
+///
+/// Models:
+///   User          — Sales team and admin users who log into the portal
+///   QuoteRequest  — Incoming requests from the WordPress webhook
+///   Quote         — Quotes built by sales from requests, with line items
+///   QuoteItem     — Individual line items within a quote
+///   Signature     — Typed signature data when a customer accepts
+///   AuditLog      — Tracks who did what and when
 
 generator client {
   provider = "prisma-client"
@@ -11,4 +15,203 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────
+// Users (sales team + admin)
+// ──────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  SALES
+}
+
+/// Portal users — sales reps and admins.
+/// Profile info (name, title, photo) appears on generated quotes.
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  title         String?
+  role          Role     @default(SALES)
+  photoUrl      String?
+  active        Boolean  @default(true)
+
+  quotes        Quote[]
+  auditLogs     AuditLog[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([email])
+}
+
+// ──────────────────────────────────────────────
+// Quote Requests (from WordPress webhook)
+// ──────────────────────────────────────────────
+
+/// Incoming quote requests from the bosssecurity.ca WordPress form or other channels.
+/// Each request can be converted into a Quote by a sales user.
+model QuoteRequest {
+  id              String   @id @default(cuid())
+  name            String
+  email           String
+  phone           String?
+  service         String?
+  cities          String[] @default([])
+  message         String?
+  sourceUrl       String?
+  idempotencyKey  String?  @unique
+
+  /// Where this lead came from. Auto-set by the webhook ("website") or
+  /// chosen by the sales rep when creating manually ("phone", "referral", "walk-in", etc.)
+  leadSource      String   @default("website")
+
+  quote           Quote?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([leadSource])
+}
+
+// ──────────────────────────────────────────────
+// Quotes
+// ──────────────────────────────────────────────
+
+enum QuoteStatus {
+  REQUEST
+  DRAFT
+  FINALISED
+  CHANGES_REQUESTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+/// A quote built by a sales user from a QuoteRequest.
+/// Once finalised, a unique token is generated for the public link.
+model Quote {
+  id              String      @id @default(cuid())
+  quoteNumber     String      @unique
+
+  /// The sales user who created/owns this quote
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+
+  /// The original request this quote was created from
+  requestId       String      @unique
+  request         QuoteRequest @relation(fields: [requestId], references: [id])
+
+  status          QuoteStatus @default(DRAFT)
+
+  /// Customer info (snapshot from request, editable on quote)
+  customerName    String
+  customerEmail   String
+  customerPhone   String?
+
+  /// Pricing (taxRate/taxAmount = GST; pstRate/pstAmount = PST)
+  subtotal        Decimal     @default(0) @db.Decimal(10, 2)
+  taxRate         Decimal     @default(0) @db.Decimal(5, 2)
+  taxAmount       Decimal     @default(0) @db.Decimal(10, 2)
+  pstRate         Decimal     @default(0) @db.Decimal(5, 2)
+  pstAmount       Decimal     @default(0) @db.Decimal(10, 2)
+  total           Decimal     @default(0) @db.Decimal(10, 2)
+
+  /// Notes visible to the customer on the quote page
+  notes           String?
+
+  /// Generated after finalisation
+  token           String?     @unique
+  defaultMessage  String?
+  validUntil      DateTime?
+
+  items           QuoteItem[]
+  signature       Signature?
+  auditLogs       AuditLog[]
+
+  finalisedAt     DateTime?
+  acceptedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// A single line item in a quote.
+/// itemType: "standard" = quantity × unitPrice; "hourly" = schedule total hours × unitPrice (hourly rate).
+/// For hourly, schedule is JSON array of { startDate, startTime, endDate?, endTime? }; server computes total hours.
+model QuoteItem {
+  id            String   @id @default(cuid())
+
+  quoteId       String
+  quote         Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  /// "standard" | "hourly" — hourly items use schedule to compute quantity (total hours)
+  itemType      String   @default("standard")
+  description   String
+  quantity      Decimal  @db.Decimal(10, 2)
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  subtotal      Decimal  @db.Decimal(10, 2)
+  /// For itemType "hourly": [{ startDate, startTime, endDate?, endTime? }]. Server computes hours.
+  schedule      Json?
+
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([quoteId])
+}
+
+// ──────────────────────────────────────────────
+// Signature (typed, on accept)
+// ──────────────────────────────────────────────
+
+/// Stored when a customer accepts a quote via the public page.
+/// Typed signature (name + title), not drawn.
+model Signature {
+  id              String   @id @default(cuid())
+
+  quoteId         String   @unique
+  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  signedBy        String
+  signedByTitle   String?
+  ipAddress       String?
+  emailVerified   Boolean  @default(false)
+
+  signedAt        DateTime @default(now())
+
+  @@index([quoteId])
+}
+
+// ──────────────────────────────────────────────
+// Audit Log
+// ──────────────────────────────────────────────
+
+/// Tracks key events: quote created, finalised, accepted, user created, etc.
+model AuditLog {
+  id              String   @id @default(cuid())
+
+  quoteId         String?
+  quote           Quote?   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id])
+
+  action          String
+  metadata        Json     @default("{}")
+  ipAddress       String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([quoteId])
+  @@index([action])
+  @@index([createdAt])
 }

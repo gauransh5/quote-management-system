@@ -1,0 +1,27 @@
+---
+description: High priority — every change must follow document-before-implementing and update docs before code
+alwaysApply: true
+---
+
+# Design and Docs First, Then Code (High Priority)
+
+For **every** prompt or requested change:
+
+1. **Follow document-before-implementing**  
+   Before writing or modifying implementation code, comply with `.cursor/rules/document-before-implementing.mdc`:
+   - Document the design (what and why; link to `docs/REQUIREMENTS.md`).
+   - Present alternatives with pros/cons when applicable.
+   - Get confirmation (or record the decision) before implementing.
+
+2. **Update docs as required**  
+   If the change affects architecture, strategy, or requirements:
+   - Update `docs/ARCHITECTURE.md` or `docs/STRATEGY.md` (or other docs) **before** or **as part of** the change.
+   - Do not ship code that silently drifts from the docs.
+
+3. **Only then make the change**  
+   Implementation happens **after** design is documented, alternatives are considered, and docs are updated (where needed).
+
+## Summary
+
+**Order of operations:** Design → Docs (if needed) → Confirmation → Code.  
+This rule takes precedence for any feature, fix, or refactor so design and documentation stay the source of truth.

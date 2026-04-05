@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Last Updated:** March 2026  
-**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md) | [STRATEGY.md](STRATEGY.md)
+**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md) | [STRATEGY.md](STRATEGY.md) | [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md)
 
 This document is the single source of truth for **what** the system must do. AI agents should use it for scope and acceptance criteria before implementing any feature.
 
@@ -57,18 +57,22 @@ Prioritised list. Each item should be traceable to the [Business Workflow](#busi
 ### Portal quote list
 
 - List all quotes with status: e.g. request, draft, finalised, sent, viewed, accepted, rejected.
-- Filter and search.
+- **Filter** on every visible column: status, customer name, email, phone, service, cities/site, quote number, total, assigned sales rep, and date range (created, finalised, accepted).
+- **Search** by free-text across customer name, email, quote number, service, and cities.
+- **Sort** on any column (ascending / descending): customer name, status, quote number, total, date created, date finalised, date accepted, sales rep.
 - Dashboard can scope to current month for totals.
 
 ### Quote finalisation and sharing
 
 - **Finalise quote** → system generates a unique, unguessable link; stores link and optional default message.
 - **Share flow:** Portal displays the link and default message; a **“Copy”** button copies the message (including the link) so the sales team can paste into Outlook and send **manually** (system does not send the quote email).
+- **Quote line items** can be **standard** (quantity × unit price) or **hourly** (schedule of date/time ranges × hourly rate). Hourly items store a schedule; the server computes total hours and line total. See [DESIGN-hourly-service-and-pst.md](DESIGN-hourly-service-and-pst.md).
+- **Tax:** Quotes support **GST** and **PST** (e.g. GST 5%, PST 7%). Totals are computed server-side (subtotal + GST + PST).
 
 ### Public quote page (by link)
 
 - Customer opens unique link (no login).
-- Page is a **branded, styled HTML page** showing the full quote details, company branding, and the **name, title, and profile photo** of the sales team member who generated the quote.
+- Page is a **branded, styled HTML page** showing the full quote details (including line-item schedule breakdown for hourly services, and GST/PST when applicable), company branding, and the **name, title, and profile photo** of the sales team member who generated the quote.
 - **Download/Print:** Customer can use browser print-to-PDF (`@media print` CSS) to save the quote. The printed version is cleanly formatted with branding and sales rep details.
 - **Accept flow:** At the bottom of the page, customer types their **name** and **title** (plain text inputs), checks an "I accept" checkbox, and clicks **"Accept Quote"**. No canvas/drawn signature — typed name is the electronic signature.
 - **Email verification before signing (optional):** If enabled, the system sends a one-time code to the customer's email before they can submit the accept form. Customer enters the code to prove they control the email address on the quote. This is configurable per quote or globally by admin — not required for MVP but should be supported.
@@ -82,11 +86,15 @@ Prioritised list. Each item should be traceable to the [Business Workflow](#busi
 ### Authentication and user management
 
 - Login for sales team and admin.
-- **Admin only:** create new users (and optionally disable/delete users).
+- **Admin only:** create, edit, and delete/disable users (in the **Users** section). Create: name, email, password, title, role, optional profile photo. **Edit:** update name, email, title, role, optional new password, **profile photo**, or set active/inactive. Delete: soft-delete (set user inactive so they cannot log in); existing quotes remain attributed to the user.
 
 ### User profile
 
-- Sales and admin users have **name**, **title**, and **profile photo** (used in quote PDF and optionally in portal).
+- Sales and admin users have **name**, **title**, and **profile photo** (used on the public quote page and optionally in the portal).
+- **Profile section** (for the logged-in user) has an **Edit** button for all users.
+  - **Non-admin users:** can edit **profile picture only** (upload/change/remove); name and title are not editable on Profile (admin can change them in the Users section if needed).
+  - **Admin users:** can edit **profile picture only** on their own Profile page; to change their own name, email, title, or role they use the Users section (editing their own row) or the same edit capabilities as for other users.
+- Admin edits **all** user details (including profile picture) only in the **Users** section, not on the Profile page of another user.
 
 ---
 

@@ -1,0 +1,45 @@
+---
+description: All monetary and numeric calculations must happen server-side as the single source of truth
+alwaysApply: true
+---
+
+# Server-Side Calculations — Single Source of Truth
+
+All monetary, numeric, and business-critical calculations MUST be performed on the server.
+
+## The rule
+
+- **Server (API routes):** The ONLY place where subtotals, tax, totals, and any derived numeric values are authoritatively computed and stored in the database.
+- **Client (React components):** May show **live preview** calculations for UX feedback while the user is editing, but these are display-only and never persisted.
+- **Database:** The single source of truth. Every page that displays monetary values (public quote, dashboard, emails, list views) reads from the DB, never from client-computed values.
+
+## What this means in practice
+
+- The client sends **inputs only** (items with quantity + unitPrice, taxRate). Never sends computed fields like subtotal or total.
+- The server recalculates `subtotal`, `taxAmount`, `total` on every save (PUT). See `app/api/quotes/[id]/route.ts`.
+- Any action that depends on totals (finalise, accept, dashboard aggregation, email content) reads from DB values, not from request body.
+
+## Why
+
+1. **Tamper-proof:** Users cannot manipulate totals via browser DevTools.
+2. **Consistent:** Public quote page, portal, emails, and dashboard all show the same numbers because they all read from the same DB values.
+3. **Precise:** Server uses Prisma Decimal (backed by PostgreSQL `DECIMAL(10,2)`), avoiding JavaScript floating-point errors like `0.1 + 0.2 = 0.30000000000000004`.
+
+## Example: correct pattern
+
+```typescript
+// Client: preview only (display while editing)
+const previewTotal = items.reduce((sum, i) => sum + i.qty * i.price, 0);
+
+// Client: sends inputs only
+await fetch('/api/quotes/123', {
+  method: 'PUT',
+  body: JSON.stringify({ items, taxRate }), // no subtotal, no total
+});
+
+// Server: authoritative calculation
+const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+const taxAmount = subtotal * (taxRate / 100);
+const total = subtotal + taxAmount;
+await prisma.quote.update({ data: { subtotal, taxAmount, total } });
+```
